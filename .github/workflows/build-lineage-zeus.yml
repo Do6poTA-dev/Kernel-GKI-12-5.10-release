@@ -143,6 +143,7 @@ jobs:
           config_file="out/.config"
           stock_config="$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config"
           image_lz4="out/arch/arm64/boot/Image.lz4"
+          image="out/arch/arm64/boot/Image"
           failures=0
 
           fail() {
@@ -157,6 +158,7 @@ jobs:
           grep -Eq '^VERSION = 5$' Makefile || fail "Kernel VERSION is not 5."
           grep -Eq '^PATCHLEVEL = 10$' Makefile || fail "Kernel PATCHLEVEL is not 10."
           grep -Eq '^SUBLEVEL = 252$' Makefile || fail "Kernel SUBLEVEL is not 252."
+          [ -f "$image" ] || fail "Missing Image."
           [ -f "$image_lz4" ] || fail "Missing Image.lz4."
           grep -Eq 'clang version 21\.' out/clang-version.txt || fail "Compiler is not Clang 21-class."
           grep -Eq '^CONFIG_LOCALVERSION="-gki"$' "$config_file" || fail 'CONFIG_LOCALVERSION="-gki" is missing.'
@@ -315,7 +317,7 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/anykernel"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
           rm -rf "$GITHUB_WORKSPACE/anykernel/.git" "$GITHUB_WORKSPACE/anykernel/.github"
-          cp "$GITHUB_WORKSPACE/kernel-src/out/arch/arm64/boot/Image.lz4" "$GITHUB_WORKSPACE/anykernel/Image.lz4"
+          cp "$GITHUB_WORKSPACE/kernel-src/out/arch/arm64/boot/Image" "$GITHUB_WORKSPACE/anykernel/Image"
 
           cat > "$GITHUB_WORKSPACE/anykernel/anykernel.sh" <<EOF
           #!/sbin/sh

@@ -54,6 +54,10 @@ It also uploads a diagnostic artifact:
 It contains the collected build outputs and `MANIFEST.txt` for debugging. It is
 not intended to be flashed directly.
 
+For `zeus`, the Lineage stock `boot` image stores the kernel as an uncompressed
+ARM64 `Image`, not `Image.lz4`, so the Lineage-matched AnyKernel3 package also
+flashes `Image`.
+
 The workflow fails before packaging when it cannot find:
 
 - kernel `Image` or `Image.lz4`
