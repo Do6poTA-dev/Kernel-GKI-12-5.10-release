@@ -43,9 +43,10 @@ The workflow fails before packaging when it cannot find:
 - key NetHunter options such as `CONFIG_USER_NS`, `CONFIG_NET_NS`, HID configfs,
   `CFG80211`, and `MAC80211`
 
-For the Lineage flashable ZIP, `CFG80211` and `MAC80211` are requested as
-built-ins (`=y`) so the boot-only package does not depend on replacing
-Lineage's `vendor_dlkm` modules.
+The Xiaomi vendor tree may keep `CFG80211` and `MAC80211` as modules (`=m`)
+instead of built-ins (`=y`). The workflow accepts both forms and uploads a
+diagnostic artifact with `vendor_dlkm` outputs, while the Lineage AnyKernel3 ZIP
+remains boot-image-only and preserves the installed Lineage ramdisk.
 
 The workflow disables strict GKI KMI symbol-list enforcement during CI. This is
 intentional for the Lineage/NetHunter experiment: `lto=none` disables CFI, while

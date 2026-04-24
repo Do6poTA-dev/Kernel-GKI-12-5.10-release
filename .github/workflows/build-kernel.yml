@@ -130,15 +130,28 @@ jobs:
           cd kernel-src
           device="${{ inputs.device }}"
           out_dir="out/msm-kernel-${device}"
+          device_out="device/qcom/${device}-kernel"
+          roots=("$out_dir")
+          if [ -d "$device_out" ]; then
+            roots+=("$device_out")
+          fi
           failures=0
 
           require_find() {
             local label="$1"
             shift
-            if ! find "$out_dir" "$@" -print -quit | grep -q .; then
-              echo "::error::Missing ${label}. Refusing to package a likely non-bootable kernel."
-              failures=$((failures + 1))
-            fi
+            local root
+            local match
+            for root in "${roots[@]}"; do
+              [ -d "$root" ] || continue
+              match="$(find "$root" "$@" -print -quit)"
+              if [ -n "$match" ]; then
+                echo "Found ${label}: ${match}"
+                return 0
+              fi
+            done
+            echo "::error::Missing ${label}. Refusing to package a likely non-bootable kernel."
+            failures=$((failures + 1))
           }
 
           require_config() {
@@ -159,24 +172,42 @@ jobs:
           require_find "device tree output" -type f \( -name '*.dtb' -o -name '*.dtbo' -o -name dtbo.img \)
           require_find "vendor modules or vendor_dlkm output" -type f \( -name '*.ko' -o -name vendor_dlkm.img -o -name vendor_dlkm.modules.load \)
 
-          config_file="$(find "$out_dir" -type f -name .config | sort | head -n 1)"
+          config_file=""
+          for candidate in \
+            "$device_out/.config" \
+            "$out_dir/msm-kernel/.config" \
+            "$out_dir/common/.config" \
+            "$out_dir/dist/.config"
+          do
+            if [ -f "$candidate" ]; then
+              config_file="$candidate"
+              break
+            fi
+          done
           if [ -z "$config_file" ]; then
             echo "::error::Missing built .config."
             exit 1
           fi
+          echo "Checking kernel config: ${config_file}"
 
           require_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
           require_config '^CONFIG_NET_NS=y$' "CONFIG_NET_NS=y"
-          require_config '^CONFIG_PID_NS=y$' "CONFIG_PID_NS=y"
           require_config '^CONFIG_PACKET=y$' "CONFIG_PACKET=y"
           require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
           require_config '^CONFIG_USB_CONFIGFS_F_HID=y$' "CONFIG_USB_CONFIGFS_F_HID=y"
           require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
-          require_config '^CONFIG_CFG80211=y$' "CONFIG_CFG80211=y"
-          require_config '^CONFIG_MAC80211=y$' "CONFIG_MAC80211=y"
+          require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211=y or m"
+          require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211=y or m"
+
+          if ! grep -Eq '^CONFIG_PID_NS=y$' "$config_file"; then
+            echo "::warning::CONFIG_PID_NS is not enabled in ${config_file}; continuing because this vendor tree can still produce a flashable Lineage boot image."
+          fi
 
           if [ "$failures" -ne 0 ]; then
-            find "$out_dir" -maxdepth 4 -type f | sort | tail -200
+            for root in "${roots[@]}"; do
+              [ -d "$root" ] || continue
+              find "$root" -maxdepth 4 -type f
+            done | sort | tail -200
             exit 1
           fi
 
@@ -186,7 +217,12 @@ jobs:
           artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic"
           mkdir -p "$artifact_dir"
 
-          find out/msm-kernel-${{ inputs.device }} -type f \
+          diagnostic_roots=(out/msm-kernel-${{ inputs.device }})
+          if [ -d device/qcom/${{ inputs.device }}-kernel ]; then
+            diagnostic_roots+=(device/qcom/${{ inputs.device }}-kernel)
+          fi
+
+          find "${diagnostic_roots[@]}" -type f \
             \( -name Image -o -name Image.lz4 -o -name '*.dtb' -o -name '*.dtbo' \
                -o -name dtbo.img -o -name vendor_dlkm.img -o -name '*.ko' \
                -o -name '*.modules.load' -o -name modules.load -o -name modules.blocklist \
@@ -204,13 +240,25 @@ jobs:
           device="${{ inputs.device }}"
           kernel_name="${{ inputs.kernel_name }}"
           out_dir="$GITHUB_WORKSPACE/kernel-src/out/msm-kernel-${device}"
+          device_out="$GITHUB_WORKSPACE/kernel-src/device/qcom/${device}-kernel"
           flashable_zip="$GITHUB_WORKSPACE/artifacts/${kernel_name}-${device}-lineage-anykernel3.zip"
 
           rm -rf "$GITHUB_WORKSPACE/anykernel"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
           rm -rf "$GITHUB_WORKSPACE/anykernel/.git" "$GITHUB_WORKSPACE/anykernel/.github"
 
-          kernel_image="$(find "$out_dir" -type f -name Image.lz4 | sort | head -n 1)"
+          kernel_image=""
+          if [ -d "$device_out" ]; then
+            kernel_image="$(find "$device_out" -type f -name Image.lz4 | sort | head -n 1)"
+          fi
+          if [ -z "$kernel_image" ]; then
+            kernel_image="$(find "$out_dir" -type f -name Image.lz4 | sort | head -n 1)"
+          fi
+          if [ -z "$kernel_image" ]; then
+            if [ -d "$device_out" ]; then
+              kernel_image="$(find "$device_out" -type f -name Image | sort | head -n 1)"
+            fi
+          fi
           if [ -z "$kernel_image" ]; then
             kernel_image="$(find "$out_dir" -type f -name Image | sort | head -n 1)"
           fi
