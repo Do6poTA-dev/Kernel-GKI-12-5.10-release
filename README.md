@@ -18,6 +18,8 @@ can compile, but it is not enough to be a safe boot artifact for this device.
 5. Keep `device=zeus` for Xiaomi 12 Pro, or choose `cupid` for Xiaomi 12.
 6. Use `lto=none` for the first CI builds. Try `thin` later if the build is
    stable enough.
+7. Use `profile=nethunter` for the NetHunter-oriented kernel options, or
+   `profile=kvm` for a smaller virtualization/virtio-only test build.
 
 ## Output
 
@@ -56,3 +58,9 @@ the upstream Android 12 GKI symbol list still expects CFI symbols such as
 The workflow also removes the generated `-Wframe-larger-than` compiler flag
 because Xiaomi touchscreen drivers can emit large stack-frame warnings that
 Android's kernel build treats as forbidden warnings.
+
+The `kvm` profile requests the core ARM64 KVM, virtio, vhost, TUN, and
+virtio-fs options. A successful build only proves the kernel accepted those
+options and produced a Lineage boot-image package; actual VM support still
+depends on the device firmware, EL2 availability, device tree, and the installed
+Lineage userspace.

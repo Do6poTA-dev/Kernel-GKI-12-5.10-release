@@ -23,6 +23,14 @@ on:
         options:
           - none
           - thin
+      profile:
+        description: "Feature profile to apply"
+        default: "nethunter"
+        required: true
+        type: choice
+        options:
+          - nethunter
+          - kvm
 
 jobs:
   build:
@@ -72,9 +80,11 @@ jobs:
             --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j"$(nproc)"
 
-      - name: Apply preventive NetHunter build settings
+      - name: Apply preventive kernel profile settings
         run: |
           cd kernel-src
+          profile="${{ inputs.profile }}"
+          fragment_path="common/arch/arm64/configs/zeus_${profile}.fragment"
 
           test -f build.sh
           test -f kernel_platform/common/build.config.msm.${{ inputs.device }}
@@ -84,7 +94,9 @@ jobs:
           test -d vendor/qcom/proprietary/audio-devicetree
           test -d vendor/qcom/proprietary/video-devicetree
 
-          cat > kernel_platform/common/arch/arm64/configs/zeus_nethunter.fragment <<'EOF'
+          case "$profile" in
+            nethunter)
+              cat > "kernel_platform/${fragment_path}" <<'EOF'
           CONFIG_NAMESPACES=y
           CONFIG_UTS_NS=y
           CONFIG_IPC_NS=y
@@ -102,9 +114,36 @@ jobs:
           CONFIG_MAC80211=y
           CONFIG_FRAME_WARN=0
           EOF
+              ;;
+            kvm)
+              cat > "kernel_platform/${fragment_path}" <<'EOF'
+          CONFIG_VIRTUALIZATION=y
+          CONFIG_KVM=y
+          CONFIG_KVM_ARM_HOST=y
+          CONFIG_KVM_ARM_PMU=y
+          CONFIG_KVM_MMIO=y
+          CONFIG_VIRTIO=y
+          CONFIG_VIRTIO_MMIO=y
+          CONFIG_VIRTIO_PCI=y
+          CONFIG_VIRTIO_NET=y
+          CONFIG_VIRTIO_BLK=y
+          CONFIG_VIRTIO_CONSOLE=y
+          CONFIG_VIRTIO_INPUT=y
+          CONFIG_VHOST_NET=y
+          CONFIG_VHOST_VSOCK=y
+          CONFIG_TUN=y
+          CONFIG_VIRTIO_BALLOON=y
+          CONFIG_VIRTIO_FS=y
+          EOF
+              ;;
+            *)
+              echo "::error::Unsupported profile: ${profile}"
+              exit 1
+              ;;
+          esac
 
           sed -i '/^export OUT_DIR=/a mkdir -p "${ANDROID_PRODUCT_OUT}"' build.sh
-          sed -i '/^export LTO=/i export DEFCONFIG_FRAGMENTS="common/arch/arm64/configs/zeus_nethunter.fragment"' build.sh
+          sed -i "/^export LTO=/i export DEFCONFIG_FRAGMENTS=\"${fragment_path}\"" build.sh
           sed -i 's/^export LTO=.*/export LTO=${{ inputs.lto }}/' build.sh
 
           # Vendor kernels often fail newer Clang builds because warnings are promoted to errors.
@@ -129,6 +168,7 @@ jobs:
         run: |
           cd kernel-src
           device="${{ inputs.device }}"
+          profile="${{ inputs.profile }}"
           out_dir="out/msm-kernel-${device}"
           device_out="device/qcom/${device}-kernel"
           roots=("$out_dir")
@@ -163,6 +203,14 @@ jobs:
             fi
           }
 
+          warn_config() {
+            local pattern="$1"
+            local label="$2"
+            if ! grep -Eq "$pattern" "$config_file"; then
+              echo "::warning::Missing ${label} in ${config_file}."
+            fi
+          }
+
           if [ ! -d "$out_dir" ]; then
             echo "::error::Missing output directory: ${out_dir}"
             exit 1
@@ -190,18 +238,42 @@ jobs:
           fi
           echo "Checking kernel config: ${config_file}"
 
-          require_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
-          require_config '^CONFIG_NET_NS=y$' "CONFIG_NET_NS=y"
-          require_config '^CONFIG_PACKET=y$' "CONFIG_PACKET=y"
-          require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
-          require_config '^CONFIG_USB_CONFIGFS_F_HID=y$' "CONFIG_USB_CONFIGFS_F_HID=y"
-          require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
-          require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211=y or m"
-          require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211=y or m"
-
-          if ! grep -Eq '^CONFIG_PID_NS=y$' "$config_file"; then
-            echo "::warning::CONFIG_PID_NS is not enabled in ${config_file}; continuing because this vendor tree can still produce a flashable Lineage boot image."
-          fi
+          case "$profile" in
+            nethunter)
+              require_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
+              require_config '^CONFIG_NET_NS=y$' "CONFIG_NET_NS=y"
+              require_config '^CONFIG_PACKET=y$' "CONFIG_PACKET=y"
+              require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
+              require_config '^CONFIG_USB_CONFIGFS_F_HID=y$' "CONFIG_USB_CONFIGFS_F_HID=y"
+              require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
+              require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211=y or m"
+              require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211=y or m"
+              warn_config '^CONFIG_PID_NS=y$' "CONFIG_PID_NS=y"
+              ;;
+            kvm)
+              require_config '^CONFIG_VIRTUALIZATION=y$' "CONFIG_VIRTUALIZATION=y"
+              require_config '^CONFIG_KVM=y$' "CONFIG_KVM=y"
+              require_config '^CONFIG_VIRTIO=y$' "CONFIG_VIRTIO=y"
+              require_config '^CONFIG_VIRTIO_MMIO=y$' "CONFIG_VIRTIO_MMIO=y"
+              require_config '^CONFIG_VIRTIO_NET=[ym]$' "CONFIG_VIRTIO_NET=y or m"
+              require_config '^CONFIG_VIRTIO_BLK=[ym]$' "CONFIG_VIRTIO_BLK=y or m"
+              require_config '^CONFIG_TUN=[ym]$' "CONFIG_TUN=y or m"
+              warn_config '^CONFIG_KVM_ARM_HOST=y$' "CONFIG_KVM_ARM_HOST=y"
+              warn_config '^CONFIG_KVM_ARM_PMU=y$' "CONFIG_KVM_ARM_PMU=y"
+              warn_config '^CONFIG_KVM_MMIO=y$' "CONFIG_KVM_MMIO=y"
+              warn_config '^CONFIG_VIRTIO_PCI=[ym]$' "CONFIG_VIRTIO_PCI=y or m"
+              warn_config '^CONFIG_VIRTIO_CONSOLE=[ym]$' "CONFIG_VIRTIO_CONSOLE=y or m"
+              warn_config '^CONFIG_VIRTIO_INPUT=[ym]$' "CONFIG_VIRTIO_INPUT=y or m"
+              warn_config '^CONFIG_VHOST_NET=[ym]$' "CONFIG_VHOST_NET=y or m"
+              warn_config '^CONFIG_VHOST_VSOCK=[ym]$' "CONFIG_VHOST_VSOCK=y or m"
+              warn_config '^CONFIG_VIRTIO_BALLOON=[ym]$' "CONFIG_VIRTIO_BALLOON=y or m"
+              warn_config '^CONFIG_VIRTIO_FS=[ym]$' "CONFIG_VIRTIO_FS=y or m"
+              ;;
+            *)
+              echo "::error::Unsupported profile: ${profile}"
+              exit 1
+              ;;
+          esac
 
           if [ "$failures" -ne 0 ]; then
             for root in "${roots[@]}"; do
