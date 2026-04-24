@@ -1,12 +1,28 @@
-name: Build GKI Kernel Zeus
+name: Build Xiaomi SM8450 NetHunter Kernel
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Kernel name'
-        default: 'zeus-NetHunter'
+        description: "Artifact name"
+        default: "zeus-NetHunter"
         required: true
+      device:
+        description: "Device codename: zeus = Xiaomi 12 Pro, cupid = Xiaomi 12"
+        default: "zeus"
+        required: true
+        type: choice
+        options:
+          - zeus
+          - cupid
+      lto:
+        description: "LTO mode. none is slower to link less often and avoids many CI timeouts."
+        default: "none"
+        required: true
+        type: choice
+        options:
+          - none
+          - thin
 
 jobs:
   build:
@@ -14,112 +30,180 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Checkout
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc bison build-essential ccache curl flex \
-            g++-multilib gcc-multilib git gnupg gperf \
-            libncurses5-dev libssl-dev libxml2 libxml2-utils \
-            lzop rsync schedtool squashfs-tools zip zlib1g-dev \
-            python3 python3-pip binutils-aarch64-linux-gnu
+            bc bison build-essential ccache curl flex g++-multilib \
+            gcc-multilib git gnupg gperf libncurses5-dev libssl-dev \
+            libxml2 libxml2-utils lz4 lzop python-is-python3 python3 \
+            python3-pip rsync schedtool squashfs-tools unzip zip zlib1g-dev \
+            binutils-aarch64-linux-gnu
+
+      - name: Install repo tool
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p "$HOME/bin"
+          curl -L --fail https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
       - name: Setup ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-gki-5.10-${{ github.sha }}
-          restore-keys: ccache-gki-5.10-
+          key: ccache-sm8450-5.10-${{ inputs.device }}-${{ github.sha }}
+          restore-keys: |
+            ccache-sm8450-5.10-${{ inputs.device }}-
+            ccache-sm8450-5.10-
 
-      - name: Clone kernel source
+      - name: Sync Xiaomi SM8450 kernel manifest
         run: |
-          git clone --depth=1 \
-            https://android.googlesource.com/kernel/common \
-            -b android12-5.10 kernel/common
+          mkdir -p kernel-src
+          cd kernel-src
+          repo init \
+            -u https://github.com/xiaomi-sm8450-kernel/manifest.git \
+            -b zeus-s-oss \
+            --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j"$(nproc)"
 
-      - name: Download Clang toolchain
+      - name: Apply preventive NetHunter build settings
         run: |
-          mkdir -p clang
-          wget -q https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20250101-release/Clang-20.0.0git-20250101.tar.gz \
-            -O clang.tar.gz
-          tar -xf clang.tar.gz -C clang
-          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
+          cd kernel-src
 
-      - name: Build kernel
+          test -f build.sh
+          test -f kernel_platform/common/build.config.msm.${{ inputs.device }}
+          test -d kernel_platform/msm-kernel
+          test -d vendor/qcom/opensource/wlan/qcacld-3.0
+          test -d vendor/qcom/opensource/touch-drivers
+          test -d vendor/qcom/proprietary/audio-devicetree
+          test -d vendor/qcom/proprietary/video-devicetree
+
+          cat > kernel_platform/common/arch/arm64/configs/zeus_nethunter.fragment <<'EOF'
+          CONFIG_NAMESPACES=y
+          CONFIG_UTS_NS=y
+          CONFIG_IPC_NS=y
+          CONFIG_USER_NS=y
+          CONFIG_NET_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_PACKET=y
+          CONFIG_VETH=y
+          CONFIG_BT_RFCOMM=y
+          CONFIG_BT_RFCOMM_TTY=y
+          CONFIG_USB_CONFIGFS=y
+          CONFIG_USB_CONFIGFS_F_HID=y
+          CONFIG_USB_RAW_GADGET=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
+          EOF
+
+          sed -i '/^export LTO=/i export DEFCONFIG_FRAGMENTS="common/arch/arm64/configs/zeus_nethunter.fragment"' build.sh
+          sed -i 's/^export LTO=.*/export LTO=${{ inputs.lto }}/' build.sh
+
+          # Vendor kernels often fail newer Clang builds because warnings are promoted to errors.
+          # This keeps CI focused on real compile failures while preserving the source tree.
+          sed -i '/^export LTO=/i export KCFLAGS="${KCFLAGS:-} -Wno-error"' build.sh
+
+      - name: Build device kernel
         run: |
-          cd kernel/common
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export LLVM=1
-          export LLVM_IAS=1
+          set -o pipefail
+          cd kernel-src
           export CCACHE_DIR=~/.ccache
-          export CC="ccache clang"
+          export USE_CCACHE=1
+          ./build.sh "${{ inputs.device }}" 2>&1 | tee "build-${{ inputs.device }}.log"
 
-          mkdir -p out
+      - name: Sanity check output before packaging
+        run: |
+          cd kernel-src
+          device="${{ inputs.device }}"
+          out_dir="out/msm-kernel-${device}"
+          failures=0
 
-          make O=out gki_defconfig
+          require_find() {
+            local label="$1"
+            shift
+            if ! find "$out_dir" "$@" -print -quit | grep -q .; then
+              echo "::error::Missing ${label}. Refusing to package a likely non-bootable kernel."
+              failures=$((failures + 1))
+            fi
+          }
 
-          # Отключаем LTO — главная причина таймаута
-          scripts/config --file out/.config \
-            --disable LTO_CLANG \
-            --disable LTO_CLANG_FULL \
-            --disable LTO_CLANG_THIN \
-            --disable THINLTO \
-            --enable USER_NS \
-            --enable NET_NS \
-            --enable PID_NS \
-            --enable VETH \
-            --enable VIRTIO_PCI \
-            --enable VIRTIO_MMIO \
-            --enable VIRTIO_NET \
-            --enable VIRTIO_BLK \
-            --enable VIRTIO_BALLOON \
-            --enable VIRTIO_CONSOLE \
-            --enable CFG80211 \
-            --enable MAC80211 \
-            --enable BT_RFCOMM \
-            --enable USB_RAW_GADGET
+          require_config() {
+            local pattern="$1"
+            local label="$2"
+            if ! grep -Eq "$pattern" "$config_file"; then
+              echo "::error::Missing ${label} in ${config_file}."
+              failures=$((failures + 1))
+            fi
+          }
 
-          make O=out olddefconfig
-
-          # Проверяем что USER_NS включён
-          grep "CONFIG_USER_NS" out/.config
-
-          make -j$(nproc) O=out 2>&1 | tee out/build.log
-
-          if [ ! -f out/arch/arm64/boot/Image ]; then
-            echo "=== ERRORS ==="
-            grep "error:" out/build.log | head -20
-            tail -50 out/build.log
+          if [ ! -d "$out_dir" ]; then
+            echo "::error::Missing output directory: ${out_dir}"
             exit 1
           fi
-          echo "=== BUILD SUCCESS ==="
-          ls -lh out/arch/arm64/boot/Image
 
-      - name: Package AnyKernel3
+          require_find "kernel Image" -type f \( -name Image -o -name Image.lz4 \)
+          require_find "device tree output" -type f \( -name '*.dtb' -o -name '*.dtbo' -o -name dtbo.img \)
+          require_find "vendor modules or vendor_dlkm output" -type f \( -name '*.ko' -o -name vendor_dlkm.img -o -name vendor_dlkm.modules.load \)
+
+          config_file="$(find "$out_dir" -type f -name .config | sort | head -n 1)"
+          if [ -z "$config_file" ]; then
+            echo "::error::Missing built .config."
+            exit 1
+          fi
+
+          require_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
+          require_config '^CONFIG_NET_NS=y$' "CONFIG_NET_NS=y"
+          require_config '^CONFIG_PID_NS=y$' "CONFIG_PID_NS=y"
+          require_config '^CONFIG_PACKET=y$' "CONFIG_PACKET=y"
+          require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
+          require_config '^CONFIG_USB_CONFIGFS_F_HID=y$' "CONFIG_USB_CONFIGFS_F_HID=y"
+          require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
+          require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211"
+          require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211"
+
+          if [ "$failures" -ne 0 ]; then
+            find "$out_dir" -maxdepth 4 -type f | sort | tail -200
+            exit 1
+          fi
+
+      - name: Package build outputs
         run: |
-          git clone --depth=1 \
-            https://github.com/osm0sis/AnyKernel3.git anykernel
-          cp kernel/common/out/arch/arm64/boot/Image anykernel/
-          cd anykernel
-          zip -r9 ../zeus-nethunter-kernel.zip . \
-            -x '*.git*' -x '*placeholder*'
+          cd kernel-src
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}"
+          mkdir -p "$artifact_dir"
 
-      - name: Upload artifact
+          find out/msm-kernel-${{ inputs.device }} -type f \
+            \( -name Image -o -name Image.lz4 -o -name '*.dtb' -o -name '*.dtbo' \
+               -o -name dtbo.img -o -name vendor_dlkm.img -o -name '*.ko' \
+               -o -name '*.modules.load' -o -name modules.load -o -name modules.blocklist \
+               -o -name .config -o -name Module.symvers -o -name System.map \) \
+            -exec cp --parents {} "$artifact_dir" \;
+
+          cp "build-${{ inputs.device }}.log" "$artifact_dir/"
+          find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
+
+          cd "$GITHUB_WORKSPACE/artifacts"
+          zip -r9 "${{ inputs.kernel_name }}-${{ inputs.device }}.zip" "${{ inputs.kernel_name }}-${{ inputs.device }}"
+
+      - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zeus-nethunter-kernel
-          path: zeus-nethunter-kernel.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}.zip
           retention-days: 7
 
-      - name: Upload build log on failure
+      - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: kernel/common/out/build.log
+          name: build-logs-${{ inputs.device }}
+          path: |
+            kernel-src/build-*.log
+            kernel-src/out/**/*.log
+          retention-days: 7
