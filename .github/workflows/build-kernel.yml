@@ -54,7 +54,7 @@ jobs:
           CONFIG_USB_RAW_GADGET=y
           EOF
 
-- name: Download Clang toolchain
+      - name: Download Clang toolchain
         run: |
           mkdir -p clang
           wget -q https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20250101-release/Clang-20.0.0git-20250101.tar.gz \
