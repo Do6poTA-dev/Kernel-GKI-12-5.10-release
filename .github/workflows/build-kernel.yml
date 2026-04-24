@@ -98,8 +98,8 @@ jobs:
           CONFIG_USB_CONFIGFS=y
           CONFIG_USB_CONFIGFS_F_HID=y
           CONFIG_USB_RAW_GADGET=y
-          CONFIG_CFG80211=m
-          CONFIG_MAC80211=m
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
           EOF
 
           sed -i '/^export LTO=/i export DEFCONFIG_FRAGMENTS="common/arch/arm64/configs/zeus_nethunter.fragment"' build.sh
@@ -108,6 +108,7 @@ jobs:
           # Vendor kernels often fail newer Clang builds because warnings are promoted to errors.
           # This keeps CI focused on real compile failures while preserving the source tree.
           sed -i '/^export LTO=/i export KCFLAGS="${KCFLAGS:-} -Wno-error"' build.sh
+          chmod +x build.sh
 
       - name: Build device kernel
         run: |
@@ -115,7 +116,7 @@ jobs:
           cd kernel-src
           export CCACHE_DIR=~/.ccache
           export USE_CCACHE=1
-          ./build.sh "${{ inputs.device }}" 2>&1 | tee "build-${{ inputs.device }}.log"
+          bash ./build.sh "${{ inputs.device }}" 2>&1 | tee "build-${{ inputs.device }}.log"
 
       - name: Sanity check output before packaging
         run: |
@@ -164,18 +165,18 @@ jobs:
           require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
           require_config '^CONFIG_USB_CONFIGFS_F_HID=y$' "CONFIG_USB_CONFIGFS_F_HID=y"
           require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
-          require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211"
-          require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211"
+          require_config '^CONFIG_CFG80211=y$' "CONFIG_CFG80211=y"
+          require_config '^CONFIG_MAC80211=y$' "CONFIG_MAC80211=y"
 
           if [ "$failures" -ne 0 ]; then
             find "$out_dir" -maxdepth 4 -type f | sort | tail -200
             exit 1
           fi
 
-      - name: Package build outputs
+      - name: Package diagnostic build outputs
         run: |
           cd kernel-src
-          artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}"
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic"
           mkdir -p "$artifact_dir"
 
           find out/msm-kernel-${{ inputs.device }} -type f \
@@ -189,13 +190,80 @@ jobs:
           find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
 
           cd "$GITHUB_WORKSPACE/artifacts"
-          zip -r9 "${{ inputs.kernel_name }}-${{ inputs.device }}.zip" "${{ inputs.kernel_name }}-${{ inputs.device }}"
+          zip -r9 "${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic.zip" "${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic"
 
-      - name: Upload kernel artifact
+      - name: Package Lineage AnyKernel3 flashable zip
+        run: |
+          device="${{ inputs.device }}"
+          kernel_name="${{ inputs.kernel_name }}"
+          out_dir="$GITHUB_WORKSPACE/kernel-src/out/msm-kernel-${device}"
+          flashable_zip="$GITHUB_WORKSPACE/artifacts/${kernel_name}-${device}-lineage-anykernel3.zip"
+
+          rm -rf "$GITHUB_WORKSPACE/anykernel"
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
+          rm -rf "$GITHUB_WORKSPACE/anykernel/.git" "$GITHUB_WORKSPACE/anykernel/.github"
+
+          kernel_image="$(find "$out_dir" -type f -name Image.lz4 | sort | head -n 1)"
+          if [ -z "$kernel_image" ]; then
+            kernel_image="$(find "$out_dir" -type f -name Image | sort | head -n 1)"
+          fi
+          if [ -z "$kernel_image" ]; then
+            echo "::error::Missing Image/Image.lz4 for AnyKernel3 package."
+            exit 1
+          fi
+          cp "$kernel_image" "$GITHUB_WORKSPACE/anykernel/$(basename "$kernel_image")"
+
+          if [ "$device" = "zeus" ]; then
+            pretty_device="Xiaomi 12 Pro"
+          else
+            pretty_device="Xiaomi 12"
+          fi
+
+          cat > "$GITHUB_WORKSPACE/anykernel/anykernel.sh" <<EOF
+          #!/sbin/sh
+          #
+          # AnyKernel3 script for LineageOS on Xiaomi SM8450.
+
+          properties() { '
+          kernel.string=${kernel_name} for LineageOS (${device})
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=${device}
+          device.name2=${pretty_device}
+          supported.versions=
+          supported.patchlevels=
+          '; }
+
+          block=boot;
+          is_slot_device=1;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+
+          . tools/ak3-core.sh;
+
+          dump_boot;
+          write_boot;
+          EOF
+
+          cd "$GITHUB_WORKSPACE/anykernel"
+          zip -r9 "$flashable_zip" . \
+            -x '*.git*' -x 'README.md' -x '*placeholder*'
+
+      - name: Upload Lineage flashable zip
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.kernel_name }}-${{ inputs.device }}
-          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-lineage-anykernel3
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-lineage-anykernel3.zip
+          retention-days: 7
+
+      - name: Upload diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-diagnostic.zip
           retention-days: 7
 
       - name: Upload build logs on failure

@@ -21,9 +21,19 @@ can compile, but it is not enough to be a safe boot artifact for this device.
 
 ## Output
 
-The artifact is a ZIP with the collected build outputs and `MANIFEST.txt`.
-It is not treated as a ready-to-flash AnyKernel package unless all required
-pieces are present.
+The main artifact is:
+
+- `${kernel_name}-${device}-lineage-anykernel3.zip`
+
+This is a kernel-only AnyKernel3 package for LineageOS. It patches the currently
+installed Lineage `boot` partition and preserves the Lineage ramdisk.
+
+A second diagnostic artifact is also uploaded:
+
+- `${kernel_name}-${device}-diagnostic.zip`
+
+It contains the collected build outputs and `MANIFEST.txt` for debugging. It is
+not intended to be flashed directly.
 
 The workflow fails before packaging when it cannot find:
 
@@ -32,3 +42,7 @@ The workflow fails before packaging when it cannot find:
 - vendor modules: `*.ko`, `vendor_dlkm.img`, or `vendor_dlkm.modules.load`
 - key NetHunter options such as `CONFIG_USER_NS`, `CONFIG_NET_NS`, HID configfs,
   `CFG80211`, and `MAC80211`
+
+For the Lineage flashable ZIP, `CFG80211` and `MAC80211` are requested as
+built-ins (`=y`) so the boot-only package does not depend on replacing
+Lineage's `vendor_dlkm` modules.
