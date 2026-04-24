@@ -46,3 +46,8 @@ The workflow fails before packaging when it cannot find:
 For the Lineage flashable ZIP, `CFG80211` and `MAC80211` are requested as
 built-ins (`=y`) so the boot-only package does not depend on replacing
 Lineage's `vendor_dlkm` modules.
+
+The workflow disables strict GKI KMI symbol-list enforcement during CI. This is
+intentional for the Lineage/NetHunter experiment: `lto=none` disables CFI, while
+the upstream Android 12 GKI symbol list still expects CFI symbols such as
+`__cfi_slowpath`.

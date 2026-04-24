@@ -116,6 +116,8 @@ jobs:
           cd kernel-src
           export CCACHE_DIR=~/.ccache
           export USE_CCACHE=1
+          export TRIM_NONLISTED_KMI=0
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
           bash ./build.sh "${{ inputs.device }}" 2>&1 | tee "build-${{ inputs.device }}.log"
 
       - name: Sanity check output before packaging
