@@ -11,9 +11,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
@@ -21,38 +23,22 @@ jobs:
           sudo apt-get install -y \
             bc bison build-essential ccache curl flex \
             g++-multilib gcc-multilib git gnupg gperf \
-            libncurses5-dev libsdl1.2-dev libssl-dev \
-            libxml2 libxml2-utils lzop pngcrush rsync \
-            schedtool squashfs-tools xsltproc zip zlib1g-dev \
-            python3 python3-pip repo
+            libncurses5-dev libssl-dev libxml2 libxml2-utils \
+            lzop rsync schedtool squashfs-tools zip zlib1g-dev \
+            python3 python3-pip binutils-aarch64-linux-gnu
+
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-gki-5.10-${{ github.sha }}
+          restore-keys: ccache-gki-5.10-
 
       - name: Clone kernel source
         run: |
-          mkdir -p kernel && cd kernel
           git clone --depth=1 \
             https://android.googlesource.com/kernel/common \
-            -b android12-5.10 common
-
-      - name: Apply NetHunter + Docker config
-        run: |
-          cd kernel/common
-          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
-          CONFIG_USER_NS=y
-          CONFIG_NAMESPACES=y
-          CONFIG_NET_NS=y
-          CONFIG_PID_NS=y
-          CONFIG_VETH=y
-          CONFIG_BRIDGE=y
-          CONFIG_VIRTIO_PCI=y
-          CONFIG_VIRTIO_MMIO=y
-          CONFIG_VIRTIO_NET=y
-          CONFIG_VIRTIO_BLK=y
-          CONFIG_VIRTIO_BALLOON=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          CONFIG_BT_RFCOMM=y
-          CONFIG_USB_RAW_GADGET=y
-          EOF
+            -b android12-5.10 kernel/common
 
       - name: Download Clang toolchain
         run: |
@@ -71,48 +57,50 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export LLVM=1
           export LLVM_IAS=1
+          export CCACHE_DIR=~/.ccache
+          export CC="ccache clang"
 
           mkdir -p out
 
-          # Use clean Google GKI defconfig
-          make O=out gki_defconfig 2>&1 | tee out/config.log
+          make O=out gki_defconfig
 
-          # Apply our custom flags on top
-          cat >> out/.config << 'EOF'
-          CONFIG_USER_NS=y
-          CONFIG_NET_NS=y
-          CONFIG_PID_NS=y
-          CONFIG_VETH=y
-          CONFIG_VIRTIO_PCI=y
-          CONFIG_VIRTIO_MMIO=y
-          CONFIG_VIRTIO_NET=y
-          CONFIG_VIRTIO_BLK=y
-          CONFIG_VIRTIO_BALLOON=y
-          CONFIG_CFG80211=y
-          CONFIG_MAC80211=y
-          CONFIG_BT_RFCOMM=y
-          CONFIG_USB_RAW_GADGET=y
-          EOF
+          # Отключаем LTO — главная причина таймаута
+          scripts/config --file out/.config \
+            --disable LTO_CLANG \
+            --disable LTO_CLANG_FULL \
+            --disable LTO_CLANG_THIN \
+            --disable THINLTO \
+            --enable USER_NS \
+            --enable NET_NS \
+            --enable PID_NS \
+            --enable VETH \
+            --enable VIRTIO_PCI \
+            --enable VIRTIO_MMIO \
+            --enable VIRTIO_NET \
+            --enable VIRTIO_BLK \
+            --enable VIRTIO_BALLOON \
+            --enable VIRTIO_CONSOLE \
+            --enable CFG80211 \
+            --enable MAC80211 \
+            --enable BT_RFCOMM \
+            --enable USB_RAW_GADGET
 
           make O=out olddefconfig
+
+          # Проверяем что USER_NS включён
+          grep "CONFIG_USER_NS" out/.config
 
           make -j$(nproc) O=out 2>&1 | tee out/build.log
 
           if [ ! -f out/arch/arm64/boot/Image ]; then
             echo "=== ERRORS ==="
-            grep -n "error:" out/build.log | head -20 || true
-            tail -30 out/build.log
+            grep "error:" out/build.log | head -20
+            tail -50 out/build.log
             exit 1
           fi
           echo "=== BUILD SUCCESS ==="
-          
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: kernel/common/out/build.log
-      
+          ls -lh out/arch/arm64/boot/Image
+
       - name: Package AnyKernel3
         run: |
           git clone --depth=1 \
@@ -128,3 +116,10 @@ jobs:
           name: zeus-nethunter-kernel
           path: zeus-nethunter-kernel.zip
           retention-days: 7
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: kernel/common/out/build.log
