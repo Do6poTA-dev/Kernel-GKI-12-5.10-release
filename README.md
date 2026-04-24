@@ -42,8 +42,13 @@ The workflow fails before packaging when it cannot find:
 - kernel `Image` or `Image.lz4`
 - device-tree output: `*.dtb`, `*.dtbo`, or `dtbo.img`
 - vendor modules: `*.ko`, `vendor_dlkm.img`, or `vendor_dlkm.modules.load`
-- key NetHunter options such as `CONFIG_USER_NS`, `CONFIG_NET_NS`, HID configfs,
-  `CFG80211`, and `MAC80211`
+- key NetHunter options such as `CONFIG_NET_NS`, HID configfs, `CFG80211`, and
+  `MAC80211`
+
+`CONFIG_USER_NS` and `CONFIG_PID_NS` are requested for the NetHunter profile,
+but this Xiaomi vendor tree may still reject them during the final config merge.
+The workflow warns instead of blocking the Lineage flashable ZIP when that
+happens.
 
 The Xiaomi vendor tree may keep `CFG80211` and `MAC80211` as modules (`=m`)
 instead of built-ins (`=y`). The workflow accepts both forms and uploads a

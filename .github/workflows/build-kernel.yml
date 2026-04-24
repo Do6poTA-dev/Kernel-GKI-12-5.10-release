@@ -240,7 +240,6 @@ jobs:
 
           case "$profile" in
             nethunter)
-              require_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
               require_config '^CONFIG_NET_NS=y$' "CONFIG_NET_NS=y"
               require_config '^CONFIG_PACKET=y$' "CONFIG_PACKET=y"
               require_config '^CONFIG_USB_CONFIGFS=y$' "CONFIG_USB_CONFIGFS=y"
@@ -248,6 +247,7 @@ jobs:
               require_config '^CONFIG_BT_RFCOMM=y$' "CONFIG_BT_RFCOMM=y"
               require_config '^CONFIG_CFG80211=[ym]$' "CONFIG_CFG80211=y or m"
               require_config '^CONFIG_MAC80211=[ym]$' "CONFIG_MAC80211=y or m"
+              warn_config '^CONFIG_USER_NS=y$' "CONFIG_USER_NS=y"
               warn_config '^CONFIG_PID_NS=y$' "CONFIG_PID_NS=y"
               ;;
             kvm)
