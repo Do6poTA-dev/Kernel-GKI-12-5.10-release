@@ -11,6 +11,8 @@ can compile, but it is not enough to be a safe boot artifact for this device.
 
 ## Run
 
+### Xiaomi OSS experimental workflow
+
 1. Open the repository on GitHub.
 2. Go to `Actions`.
 3. Select `Build Xiaomi SM8450 NetHunter Kernel`.
@@ -20,6 +22,17 @@ can compile, but it is not enough to be a safe boot artifact for this device.
    stable enough.
 7. Use `profile=nethunter` for the NetHunter-oriented kernel options, or
    `profile=kvm` for a smaller virtualization/virtio-only test build.
+
+### Lineage-matched workflow
+
+Use `Build Lineage-Matched Zeus Kernel` for LineageOS 23.2 on Xiaomi 12 Pro
+(`zeus`). This workflow is the safer path after the Xiaomi OSS kernel bootloop:
+it clones `LineageOS/android_kernel_xiaomi_sm8450` branch `lineage-23.2`, starts
+from the stock `LineageOS 23.2-20260414-NIGHTLY-zeus` `/proc/config.gz`, and
+packages only a boot-image AnyKernel3 ZIP.
+
+Start with `profile=baseline`. Do not flash `kvm-lite` or `nethunter-lite` until
+the baseline ZIP boots and ADB comes online.
 
 ## Output
 
@@ -75,3 +88,16 @@ treated as required. Specific virtio transport/device drivers are warnings
 because this vendor tree may reject them during the final config merge; without
 virtio net/block support, practical guest I/O can be limited even if the kernel
 boot image flashes successfully.
+
+## Lineage 23.2 baseline notes
+
+The checked-in baseline config is stored at:
+
+- `configs/zeus-lineage-23.2-20260414.config`
+
+It was extracted from the currently booting LineageOS 23.2 build on `zeus`. The
+Lineage-matched workflow fails if the build drifts too far from that config, if
+the kernel is not `5.10.252`, or if Clang is not version 21-class. This follows
+the XDA lesson from tested custom kernels: match ROM generation, source tree,
+compiler family, and config before adding KernelSU, NetHunter, or virtualization
+patches.

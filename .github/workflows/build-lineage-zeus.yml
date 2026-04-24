@@ -1,0 +1,322 @@
+name: Build Lineage-Matched Zeus Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: "Artifact name"
+        default: "zeus-LineageBaseline"
+        required: true
+      device:
+        description: "Device codename"
+        default: "zeus"
+        required: true
+        type: choice
+        options:
+          - zeus
+      profile:
+        description: "Feature profile. Start with baseline before flashing any lite profile."
+        default: "baseline"
+        required: true
+        type: choice
+        options:
+          - baseline
+          - kvm-lite
+          - nethunter-lite
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex git libelf-dev \
+            libncurses5-dev libssl-dev lz4 python-is-python3 python3 \
+            rsync unzip wget zip zlib1g-dev
+
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-lineage-sm8450-5.10-${{ inputs.device }}-${{ github.sha }}
+          restore-keys: |
+            ccache-lineage-sm8450-5.10-${{ inputs.device }}-
+            ccache-lineage-sm8450-5.10-
+
+      - name: Download Clang 21 toolchain
+        run: |
+          mkdir -p clang
+          wget -q \
+            https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250715-release/Clang-21.0.0git-20250715.tar.gz \
+            -O clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+          "$GITHUB_WORKSPACE/clang/bin/clang" --version
+
+      - name: Clone LineageOS SM8450 kernel
+        run: |
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_kernel_xiaomi_sm8450.git \
+            -b lineage-23.2 \
+            kernel-src
+
+      - name: Apply Lineage stock config
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          profile="${{ inputs.profile }}"
+          mkdir -p out
+          cp "$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config" out/.config
+
+          case "$profile" in
+            baseline|kvm-lite)
+              echo "Using stock Lineage config without feature changes for ${profile}."
+              ;;
+            nethunter-lite)
+              scripts/config --file out/.config --enable USB_RAW_GADGET
+              ;;
+            *)
+              echo "::error::Unsupported profile: ${profile}"
+              exit 1
+              ;;
+          esac
+
+      - name: Build Lineage-matched kernel
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export CCACHE_DIR=~/.ccache
+          export KBUILD_BUILD_USER=github-actions
+          export KBUILD_BUILD_HOST=lineage-zeus
+
+          clang --version | tee out/clang-version.txt
+          make O=out olddefconfig
+          make -j"$(nproc)" O=out Image.lz4 2>&1 | tee out/build-zeus-lineage.log
+
+      - name: Sanity check Lineage-matched output
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          profile="${{ inputs.profile }}"
+          config_file="out/.config"
+          stock_config="$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config"
+          image_lz4="out/arch/arm64/boot/Image.lz4"
+          failures=0
+
+          fail() {
+            echo "::error::$1"
+            failures=$((failures + 1))
+          }
+
+          warn() {
+            echo "::warning::$1"
+          }
+
+          grep -Eq '^VERSION = 5$' Makefile || fail "Kernel VERSION is not 5."
+          grep -Eq '^PATCHLEVEL = 10$' Makefile || fail "Kernel PATCHLEVEL is not 10."
+          grep -Eq '^SUBLEVEL = 252$' Makefile || fail "Kernel SUBLEVEL is not 252."
+          [ -f "$image_lz4" ] || fail "Missing Image.lz4."
+          grep -Eq 'clang version 21\.' out/clang-version.txt || fail "Compiler is not Clang 21-class."
+          grep -Eq '^CONFIG_LOCALVERSION="-gki"$' "$config_file" || fail 'CONFIG_LOCALVERSION="-gki" is missing.'
+          grep -Eq '^CONFIG_LTO=y$' "$config_file" || fail "CONFIG_LTO=y is missing."
+          grep -Eq '^CONFIG_LTO_CLANG=y$' "$config_file" || fail "CONFIG_LTO_CLANG=y is missing."
+          grep -Eq '^CONFIG_LTO_CLANG_FULL=y$' "$config_file" || fail "CONFIG_LTO_CLANG_FULL=y is missing."
+          grep -Eq '^CONFIG_CFI_CLANG=y$' "$config_file" || fail "CONFIG_CFI_CLANG=y is missing."
+          grep -Eq '^CONFIG_CFI_CLANG_SHADOW=y$' "$config_file" || fail "CONFIG_CFI_CLANG_SHADOW=y is missing."
+
+          case "$profile" in
+            baseline)
+              ;;
+            kvm-lite)
+              grep -Eq '^CONFIG_KVM=y$' "$config_file" || fail "CONFIG_KVM=y is missing."
+              grep -Eq '^CONFIG_VIRTIO=y$' "$config_file" || fail "CONFIG_VIRTIO=y is missing."
+              grep -Eq '^CONFIG_TUN=y$' "$config_file" || fail "CONFIG_TUN=y is missing."
+              ;;
+            nethunter-lite)
+              grep -Eq '^CONFIG_NET_NS=y$' "$config_file" || fail "CONFIG_NET_NS=y is missing."
+              grep -Eq '^CONFIG_PACKET=y$' "$config_file" || fail "CONFIG_PACKET=y is missing."
+              grep -Eq '^CONFIG_VETH=y$' "$config_file" || fail "CONFIG_VETH=y is missing."
+              grep -Eq '^CONFIG_BT_RFCOMM=y$' "$config_file" || fail "CONFIG_BT_RFCOMM=y is missing."
+              grep -Eq '^CONFIG_BT_RFCOMM_TTY=y$' "$config_file" || fail "CONFIG_BT_RFCOMM_TTY=y is missing."
+              grep -Eq '^CONFIG_USB_CONFIGFS=y$' "$config_file" || fail "CONFIG_USB_CONFIGFS=y is missing."
+              grep -Eq '^CONFIG_USB_CONFIGFS_F_HID=y$' "$config_file" || fail "CONFIG_USB_CONFIGFS_F_HID=y is missing."
+              grep -Eq '^CONFIG_CFG80211=m$' "$config_file" || fail "CONFIG_CFG80211=m is missing."
+              grep -Eq '^CONFIG_MAC80211=m$' "$config_file" || fail "CONFIG_MAC80211=m is missing."
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$' "$config_file"; then
+                fail "nethunter-lite must not force CONFIG_USER_NS or CONFIG_PID_NS."
+              fi
+              ;;
+            *)
+              fail "Unsupported profile: ${profile}"
+              ;;
+          esac
+
+          python3 - "$stock_config" "$config_file" "$profile" <<'PY'
+          import sys
+          from pathlib import Path
+
+          stock_path = Path(sys.argv[1])
+          built_path = Path(sys.argv[2])
+          profile = sys.argv[3]
+
+          ignore_prefixes = (
+              "CONFIG_CC_",
+              "CONFIG_AS_",
+              "CONFIG_LD_",
+              "CONFIG_LLD_",
+          )
+          ignore_exact = {
+              "CONFIG_CLANG_VERSION",
+              "CONFIG_GCC_VERSION",
+              "CONFIG_TOOLS_SUPPORT_RELR",
+              "CONFIG_BUILD_SALT",
+          }
+          profile_allowed = {
+              "baseline": set(),
+              "kvm-lite": set(),
+              "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
+          }
+          max_unexpected = {
+              "baseline": 25,
+              "kvm-lite": 25,
+              "nethunter-lite": 35,
+          }[profile]
+
+          def parse(path):
+              data = {}
+              for line in path.read_text(errors="ignore").splitlines():
+                  if line.startswith("CONFIG_") and "=" in line:
+                      key, value = line.split("=", 1)
+                      data[key] = value
+                  elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                      key = line[len("# "):].split()[0]
+                      data[key] = "n"
+              return data
+
+          stock = parse(stock_path)
+          built = parse(built_path)
+          unexpected = []
+          for key in sorted(set(stock) | set(built)):
+              if stock.get(key) == built.get(key):
+                  continue
+              if key in ignore_exact or key.startswith(ignore_prefixes):
+                  continue
+              if key in profile_allowed[profile]:
+                  continue
+              unexpected.append((key, stock.get(key), built.get(key)))
+
+          print(f"Unexpected config differences: {len(unexpected)}")
+          for key, stock_value, built_value in unexpected[:120]:
+              print(f"{key}: stock={stock_value} built={built_value}")
+          if len(unexpected) > max_unexpected:
+              raise SystemExit(1)
+          PY
+
+          if [ "$failures" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Package diagnostic build outputs
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic"
+          mkdir -p "$artifact_dir"
+          cp out/.config "$artifact_dir/built.config"
+          cp "$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config" "$artifact_dir/stock.config"
+          cp out/clang-version.txt "$artifact_dir/"
+          cp out/build-zeus-lineage.log "$artifact_dir/"
+          cp out/arch/arm64/boot/Image.lz4 "$artifact_dir/"
+          if [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image "$artifact_dir/"
+          fi
+          find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
+
+          cd "$GITHUB_WORKSPACE/artifacts"
+          zip -r9 "${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic.zip" \
+            "${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic"
+
+      - name: Package Lineage AnyKernel3 flashable zip
+        run: |
+          set -euo pipefail
+          device="${{ inputs.device }}"
+          profile="${{ inputs.profile }}"
+          kernel_name="${{ inputs.kernel_name }}"
+          flashable_zip="$GITHUB_WORKSPACE/artifacts/${kernel_name}-${device}-${profile}-lineage-anykernel3.zip"
+
+          rm -rf "$GITHUB_WORKSPACE/anykernel"
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
+          rm -rf "$GITHUB_WORKSPACE/anykernel/.git" "$GITHUB_WORKSPACE/anykernel/.github"
+          cp "$GITHUB_WORKSPACE/kernel-src/out/arch/arm64/boot/Image.lz4" "$GITHUB_WORKSPACE/anykernel/Image.lz4"
+
+          cat > "$GITHUB_WORKSPACE/anykernel/anykernel.sh" <<EOF
+          #!/sbin/sh
+          #
+          # AnyKernel3 script for LineageOS 23.2 on Xiaomi 12 Pro (zeus).
+
+          properties() { '
+          kernel.string=${kernel_name} ${profile} for LineageOS 23.2 (${device})
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=0
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=${device}
+          device.name2=Xiaomi 12 Pro
+          supported.versions=
+          supported.patchlevels=
+          '; }
+
+          block=boot;
+          is_slot_device=1;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+
+          . tools/ak3-core.sh;
+
+          dump_boot;
+          write_boot;
+          EOF
+
+          cd "$GITHUB_WORKSPACE/anykernel"
+          zip -r9 "$flashable_zip" . \
+            -x '*.git*' -x 'README.md' -x '*placeholder*'
+
+      - name: Upload Lineage flashable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-lineage-anykernel3
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-lineage-anykernel3.zip
+          retention-days: 7
+
+      - name: Upload diagnostic artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic.zip
+          retention-days: 7
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lineage-zeus-build-log-${{ inputs.profile }}
+          path: |
+            kernel-src/out/build-zeus-lineage.log
+            kernel-src/out/clang-version.txt
+            kernel-src/out/.config
+          retention-days: 7
