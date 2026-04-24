@@ -74,9 +74,10 @@ jobs:
 
           mkdir -p out
 
-          # Патчим проблемный MTK файл
-          sed -i 's/mtk_mmc_host/mmc_host/g' \
-            drivers/char/rpmb/rpmb-mtk.c 2>/dev/null || true
+          # Полностью убираем MTK RPMB из сборки
+          rm -f drivers/char/rpmb/rpmb-mtk.c
+          sed -i '/rpmb-mtk/d' drivers/char/rpmb/Makefile 2>/dev/null || true
+          sed -i '/rpmb.*mtk\|mtk.*rpmb/Id' drivers/char/rpmb/Kconfig 2>/dev/null || true
 
           # Конфиг
           make O=out daumier_defconfig 2>&1 | tee out/config.log
