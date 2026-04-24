@@ -72,13 +72,16 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
 
-          # Создаём out директорию
           mkdir -p out
+
+          # Патчим проблемный MTK файл
+          sed -i 's/mtk_mmc_host/mmc_host/g' \
+            drivers/char/rpmb/rpmb-mtk.c 2>/dev/null || true
 
           # Конфиг
           make O=out daumier_defconfig 2>&1 | tee out/config.log
 
-          # Применяем наши флаги поверх defconfig
+          # Применяем наши флаги
           cat >> out/.config << 'EOF'
           CONFIG_USER_NS=y
           CONFIG_NET_NS=y
@@ -92,15 +95,15 @@ jobs:
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_BT_RFCOMM=y
+          # Отключаем проблемные MTK драйверы
+          CONFIG_RPMB_MTK=n
+          CONFIG_MTK_MMC=n
           EOF
 
-          # Обновляем конфиг
           make O=out olddefconfig
 
-          # Сборка
           make -j$(nproc) O=out 2>&1 | tee out/build.log
 
-          # Проверяем результат
           if [ ! -f out/arch/arm64/boot/Image ]; then
             echo "=== ERRORS ==="
             grep -n "error:" out/build.log | head -20 || true
