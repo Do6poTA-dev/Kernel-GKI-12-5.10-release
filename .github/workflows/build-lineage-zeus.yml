@@ -23,6 +23,14 @@ on:
           - baseline
           - kvm-lite
           - nethunter-lite
+      lto_mode:
+        description: "LTO mode. thin is CI-friendly; stock-full matches the phone config but can exceed runner resources."
+        default: "thin"
+        required: true
+        type: choice
+        options:
+          - thin
+          - stock-full
 
 jobs:
   build:
@@ -72,6 +80,7 @@ jobs:
           set -euo pipefail
           cd kernel-src
           profile="${{ inputs.profile }}"
+          lto_mode="${{ inputs.lto_mode }}"
           mkdir -p out
           cp "$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config" out/.config
 
@@ -84,6 +93,27 @@ jobs:
               ;;
             *)
               echo "::error::Unsupported profile: ${profile}"
+              exit 1
+              ;;
+          esac
+
+          case "$lto_mode" in
+            stock-full)
+              echo "Keeping stock full LTO/CFI settings."
+              ;;
+            thin)
+              echo "Switching from stock full LTO to ThinLTO to fit GitHub Actions runners."
+              scripts/config --file out/.config \
+                --enable LTO \
+                --enable LTO_CLANG \
+                --disable LTO_CLANG_FULL \
+                --enable LTO_CLANG_THIN \
+                --disable LTO_NONE \
+                --enable CFI_CLANG \
+                --enable CFI_CLANG_SHADOW
+              ;;
+            *)
+              echo "::error::Unsupported lto_mode: ${lto_mode}"
               exit 1
               ;;
           esac
@@ -109,6 +139,7 @@ jobs:
           set -euo pipefail
           cd kernel-src
           profile="${{ inputs.profile }}"
+          lto_mode="${{ inputs.lto_mode }}"
           config_file="out/.config"
           stock_config="$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config"
           image_lz4="out/arch/arm64/boot/Image.lz4"
@@ -131,9 +162,23 @@ jobs:
           grep -Eq '^CONFIG_LOCALVERSION="-gki"$' "$config_file" || fail 'CONFIG_LOCALVERSION="-gki" is missing.'
           grep -Eq '^CONFIG_LTO=y$' "$config_file" || fail "CONFIG_LTO=y is missing."
           grep -Eq '^CONFIG_LTO_CLANG=y$' "$config_file" || fail "CONFIG_LTO_CLANG=y is missing."
-          grep -Eq '^CONFIG_LTO_CLANG_FULL=y$' "$config_file" || fail "CONFIG_LTO_CLANG_FULL=y is missing."
           grep -Eq '^CONFIG_CFI_CLANG=y$' "$config_file" || fail "CONFIG_CFI_CLANG=y is missing."
           grep -Eq '^CONFIG_CFI_CLANG_SHADOW=y$' "$config_file" || fail "CONFIG_CFI_CLANG_SHADOW=y is missing."
+
+          case "$lto_mode" in
+            stock-full)
+              grep -Eq '^CONFIG_LTO_CLANG_FULL=y$' "$config_file" || fail "CONFIG_LTO_CLANG_FULL=y is missing."
+              ;;
+            thin)
+              grep -Eq '^CONFIG_LTO_CLANG_THIN=y$' "$config_file" || fail "CONFIG_LTO_CLANG_THIN=y is missing."
+              if grep -Eq '^CONFIG_LTO_CLANG_FULL=y$' "$config_file"; then
+                fail "ThinLTO mode unexpectedly kept CONFIG_LTO_CLANG_FULL=y."
+              fi
+              ;;
+            *)
+              fail "Unsupported lto_mode: ${lto_mode}"
+              ;;
+          esac
 
           case "$profile" in
             baseline)
@@ -165,13 +210,14 @@ jobs:
               ;;
           esac
 
-          python3 - "$stock_config" "$config_file" "$profile" <<'PY'
+          python3 - "$stock_config" "$config_file" "$profile" "$lto_mode" <<'PY'
           import sys
           from pathlib import Path
 
           stock_path = Path(sys.argv[1])
           built_path = Path(sys.argv[2])
           profile = sys.argv[3]
+          lto_mode = sys.argv[4]
 
           ignore_prefixes = (
               "CONFIG_CC_",
@@ -189,6 +235,10 @@ jobs:
               "baseline": set(),
               "kvm-lite": set(),
               "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
+          }
+          lto_allowed = {
+              "stock-full": set(),
+              "thin": {"CONFIG_LTO_CLANG_FULL", "CONFIG_LTO_CLANG_THIN"},
           }
           max_unexpected = {
               "baseline": 25,
@@ -217,6 +267,8 @@ jobs:
                   continue
               if key in profile_allowed[profile]:
                   continue
+              if key in lto_allowed[lto_mode]:
+                  continue
               unexpected.append((key, stock.get(key), built.get(key)))
 
           print(f"Unexpected config differences: {len(unexpected)}")
@@ -234,7 +286,8 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel-src
-          artifact_dir="$GITHUB_WORKSPACE/artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic"
+          artifact_slug="${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}"
+          artifact_dir="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-diagnostic"
           mkdir -p "$artifact_dir"
           cp out/.config "$artifact_dir/built.config"
           cp "$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config" "$artifact_dir/stock.config"
@@ -247,16 +300,17 @@ jobs:
           find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
 
           cd "$GITHUB_WORKSPACE/artifacts"
-          zip -r9 "${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic.zip" \
-            "${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic"
+          zip -r9 "${artifact_slug}-diagnostic.zip" "${artifact_slug}-diagnostic"
 
       - name: Package Lineage AnyKernel3 flashable zip
         run: |
           set -euo pipefail
           device="${{ inputs.device }}"
           profile="${{ inputs.profile }}"
+          lto_mode="${{ inputs.lto_mode }}"
           kernel_name="${{ inputs.kernel_name }}"
-          flashable_zip="$GITHUB_WORKSPACE/artifacts/${kernel_name}-${device}-${profile}-lineage-anykernel3.zip"
+          artifact_slug="${kernel_name}-${device}-${profile}-${lto_mode}"
+          flashable_zip="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-lineage-anykernel3.zip"
 
           rm -rf "$GITHUB_WORKSPACE/anykernel"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/anykernel"
@@ -269,7 +323,7 @@ jobs:
           # AnyKernel3 script for LineageOS 23.2 on Xiaomi 12 Pro (zeus).
 
           properties() { '
-          kernel.string=${kernel_name} ${profile} for LineageOS 23.2 (${device})
+          kernel.string=${kernel_name} ${profile}/${lto_mode} for LineageOS 23.2 (${device})
           do.devicecheck=1
           do.modules=0
           do.systemless=0
@@ -299,22 +353,22 @@ jobs:
       - name: Upload Lineage flashable zip
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-lineage-anykernel3
-          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-lineage-anykernel3.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-lineage-anykernel3
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-lineage-anykernel3.zip
           retention-days: 7
 
       - name: Upload diagnostic artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic
-          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-diagnostic.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-diagnostic
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-diagnostic.zip
           retention-days: 7
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: lineage-zeus-build-log-${{ inputs.profile }}
+          name: lineage-zeus-build-log-${{ inputs.profile }}-${{ inputs.lto_mode }}
           path: |
             kernel-src/out/build-zeus-lineage.log
             kernel-src/out/clang-version.txt
