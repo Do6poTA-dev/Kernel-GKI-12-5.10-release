@@ -69,3 +69,9 @@ virtio-fs options. A successful build only proves the kernel accepted those
 options and produced a Lineage boot-image package; actual VM support still
 depends on the device firmware, EL2 availability, device tree, and the installed
 Lineage userspace.
+
+For the `kvm` profile, `CONFIG_KVM`, `CONFIG_VIRTIO`, and `CONFIG_TUN` are
+treated as required. Specific virtio transport/device drivers are warnings
+because this vendor tree may reject them during the final config merge; without
+virtio net/block support, practical guest I/O can be limited even if the kernel
+boot image flashes successfully.
