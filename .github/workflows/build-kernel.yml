@@ -30,13 +30,13 @@ jobs:
         run: |
           mkdir -p kernel && cd kernel
           git clone --depth=1 \
-            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            -b daumier-s-oss common
+            https://android.googlesource.com/kernel/common \
+            -b android12-5.10 common
 
       - name: Apply NetHunter + Docker config
         run: |
           cd kernel/common
-          cat >> arch/arm64/configs/zeus_defconfig << 'EOF'
+          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
           CONFIG_USER_NS=y
           CONFIG_NAMESPACES=y
           CONFIG_NET_NS=y
@@ -74,15 +74,10 @@ jobs:
 
           mkdir -p out
 
-          # Полностью убираем MTK RPMB из сборки
-          rm -f drivers/char/rpmb/rpmb-mtk.c
-          sed -i '/rpmb-mtk/d' drivers/char/rpmb/Makefile 2>/dev/null || true
-          sed -i '/rpmb.*mtk\|mtk.*rpmb/Id' drivers/char/rpmb/Kconfig 2>/dev/null || true
+          # Use clean Google GKI defconfig
+          make O=out gki_defconfig 2>&1 | tee out/config.log
 
-          # Конфиг
-          make O=out daumier_defconfig 2>&1 | tee out/config.log
-
-          # Применяем наши флаги
+          # Apply our custom flags on top
           cat >> out/.config << 'EOF'
           CONFIG_USER_NS=y
           CONFIG_NET_NS=y
@@ -96,9 +91,7 @@ jobs:
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
           CONFIG_BT_RFCOMM=y
-          # Отключаем проблемные MTK драйверы
-          CONFIG_RPMB_MTK=n
-          CONFIG_MTK_MMC=n
+          CONFIG_USB_RAW_GADGET=y
           EOF
 
           make O=out olddefconfig
