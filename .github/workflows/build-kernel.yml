@@ -100,8 +100,10 @@ jobs:
           CONFIG_USB_RAW_GADGET=y
           CONFIG_CFG80211=y
           CONFIG_MAC80211=y
+          CONFIG_FRAME_WARN=0
           EOF
 
+          sed -i '/^export OUT_DIR=/a mkdir -p "${ANDROID_PRODUCT_OUT}"' build.sh
           sed -i '/^export LTO=/i export DEFCONFIG_FRAGMENTS="common/arch/arm64/configs/zeus_nethunter.fragment"' build.sh
           sed -i 's/^export LTO=.*/export LTO=${{ inputs.lto }}/' build.sh
 

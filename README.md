@@ -51,3 +51,7 @@ The workflow disables strict GKI KMI symbol-list enforcement during CI. This is
 intentional for the Lineage/NetHunter experiment: `lto=none` disables CFI, while
 the upstream Android 12 GKI symbol list still expects CFI symbols such as
 `__cfi_slowpath`.
+
+`CONFIG_FRAME_WARN=0` is also applied because Xiaomi touchscreen drivers can
+emit large stack-frame warnings that Android's kernel build treats as forbidden
+warnings.
