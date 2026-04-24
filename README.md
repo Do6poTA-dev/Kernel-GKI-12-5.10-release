@@ -34,10 +34,12 @@ packages only a boot-image AnyKernel3 ZIP.
 Start with `profile=baseline`. Do not flash `kvm-lite` or `nethunter-lite` until
 the baseline ZIP boots and ADB comes online.
 
-Use `toolchain=android-r563880c` and `lto_mode=stock-full` for the closest
-match to the phone's stock kernel. `toolchain=zyc-21` and `lto_mode=thin` are
-kept only as CI/debug fallbacks; that combination builds, but did not boot on
-the test device.
+Use `toolchain=android-r563880c` and `lto_mode=thin` for the verified GitHub
+Actions baseline. It booted on the test `zeus` device on slot `_b` while keeping
+the stock Lineage source commit, config, compiler family, CFI, and boot-image
+kernel format. `lto_mode=stock-full` is the closest config match, but GitHub's
+hosted runner killed the full-LTO link with exit `143`; use it only on a larger
+or local runner.
 
 ## Output
 
@@ -112,6 +114,8 @@ compiler family, and config before adding KernelSU, NetHunter, or virtualization
 patches.
 
 The stock phone config uses Android clang build `14054515` from
-`git_llvm-r563880-release` and full LTO/CFI. A previous CI fallback using ZyC
-Clang 21 plus ThinLTO produced a valid ZIP after packaging fixes, but the phone
-still fell back to fastboot before userspace, so it is not considered bootable.
+`git_llvm-r563880-release` and full LTO/CFI. The boot-verified CI baseline keeps
+that exact compiler and CFI, but switches full LTO to ThinLTO. A previous ZyC
+Clang 21 plus ThinLTO fallback produced a valid ZIP after packaging fixes, but
+the phone still fell back to fastboot before userspace, so it is not considered
+bootable.

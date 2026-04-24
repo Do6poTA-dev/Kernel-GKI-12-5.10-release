@@ -25,7 +25,7 @@ on:
           - nethunter-lite
       lto_mode:
         description: "LTO mode. thin is CI-friendly; stock-full matches the phone config but can exceed runner resources."
-        default: "stock-full"
+        default: "thin"
         required: true
         type: choice
         options:
