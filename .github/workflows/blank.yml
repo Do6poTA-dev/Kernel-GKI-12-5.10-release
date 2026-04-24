@@ -1,0 +1,88 @@
+name: Build GKI Kernel Zeus
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Kernel name'
+        default: 'zeus-NetHunter'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf \
+            libncurses5-dev libsdl1.2-dev libssl-dev \
+            libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python3-pip repo
+
+      - name: Clone kernel source
+        run: |
+          mkdir -p kernel && cd kernel
+          git clone --depth=1 \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
+            -b daumier-s-oss common
+
+      - name: Apply NetHunter + Docker config
+        run: |
+          cd kernel/common
+          cat >> arch/arm64/configs/zeus_defconfig << 'EOF'
+          CONFIG_USER_NS=y
+          CONFIG_NAMESPACES=y
+          CONFIG_NET_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_VETH=y
+          CONFIG_BRIDGE=y
+          CONFIG_VIRTIO_PCI=y
+          CONFIG_VIRTIO_MMIO=y
+          CONFIG_VIRTIO_NET=y
+          CONFIG_VIRTIO_BLK=y
+          CONFIG_VIRTIO_BALLOON=y
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
+          CONFIG_BT_RFCOMM=y
+          CONFIG_USB_RAW_GADGET=y
+          EOF
+
+      - name: Download Clang toolchain
+        run: |
+          mkdir -p clang
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz \
+            -O clang.tar.gz
+          tar -xf clang.tar.gz -C clang
+
+      - name: Build kernel
+        run: |
+          cd kernel/common
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          make O=out zeus_defconfig
+          make -j$(nproc) O=out
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 \
+            https://github.com/osm0sis/AnyKernel3.git anykernel
+          cp kernel/common/out/arch/arm64/boot/Image anykernel/
+          cd anykernel
+          zip -r9 ../zeus-nethunter-kernel.zip . \
+            -x '*.git*' -x '*placeholder*'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zeus-nethunter-kernel
+          path: zeus-nethunter-kernel.zip
+          retention-days: 7
