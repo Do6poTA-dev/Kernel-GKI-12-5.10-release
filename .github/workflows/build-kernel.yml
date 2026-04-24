@@ -81,7 +81,7 @@ jobs:
             -x '*.git*' -x '*placeholder*'
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zeus-nethunter-kernel
           path: zeus-nethunter-kernel.zip
