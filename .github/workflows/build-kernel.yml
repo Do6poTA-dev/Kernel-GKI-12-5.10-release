@@ -71,18 +71,44 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export LLVM=1
           export LLVM_IAS=1
-          make O=out zeus_defconfig 2>&1 | tee out/config.log
-          make -j$(nproc) O=out 2>&1 | tee out/build.log | grep -E "error:|warning:|Error" || true
-          # Показываем последние ошибки
-          grep -n "error:" out/build.log | tail -30 || true
+
+          # Создаём out директорию
+          mkdir -p out
+
+          # Конфиг
+          make O=out daumier_defconfig 2>&1 | tee out/config.log
+
+          # Применяем наши флаги поверх defconfig
+          cat >> out/.config << 'EOF'
+          CONFIG_USER_NS=y
+          CONFIG_NET_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_VETH=y
+          CONFIG_VIRTIO_PCI=y
+          CONFIG_VIRTIO_MMIO=y
+          CONFIG_VIRTIO_NET=y
+          CONFIG_VIRTIO_BLK=y
+          CONFIG_VIRTIO_BALLOON=y
+          CONFIG_CFG80211=y
+          CONFIG_MAC80211=y
+          CONFIG_BT_RFCOMM=y
+          EOF
+
+          # Обновляем конфиг
+          make O=out olddefconfig
+
+          # Сборка
+          make -j$(nproc) O=out 2>&1 | tee out/build.log
+
           # Проверяем результат
           if [ ! -f out/arch/arm64/boot/Image ]; then
-            echo "=== FIRST ERROR ==="
-            grep -m1 "error:" out/build.log || true
-            echo "=== LAST 50 LINES ==="
-            tail -50 out/build.log
+            echo "=== ERRORS ==="
+            grep -n "error:" out/build.log | head -20 || true
+            tail -30 out/build.log
             exit 1
           fi
+          echo "=== BUILD SUCCESS ==="
+          
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
