@@ -68,10 +68,28 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export LLVM=1
-          make O=out zeus_defconfig
-          make -j$(nproc) O=out
-
+          export LLVM_IAS=1
+          make O=out zeus_defconfig 2>&1 | tee out/config.log
+          make -j$(nproc) O=out 2>&1 | tee out/build.log | grep -E "error:|warning:|Error" || true
+          # Показываем последние ошибки
+          grep -n "error:" out/build.log | tail -30 || true
+          # Проверяем результат
+          if [ ! -f out/arch/arm64/boot/Image ]; then
+            echo "=== FIRST ERROR ==="
+            grep -m1 "error:" out/build.log || true
+            echo "=== LAST 50 LINES ==="
+            tail -50 out/build.log
+            exit 1
+          fi
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: kernel/common/out/build.log
+      
       - name: Package AnyKernel3
         run: |
           git clone --depth=1 \
