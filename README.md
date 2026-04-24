@@ -52,6 +52,6 @@ intentional for the Lineage/NetHunter experiment: `lto=none` disables CFI, while
 the upstream Android 12 GKI symbol list still expects CFI symbols such as
 `__cfi_slowpath`.
 
-The workflow also suppresses `-Wframe-larger-than` because Xiaomi touchscreen
-drivers can emit large stack-frame warnings that Android's kernel build treats
-as forbidden warnings.
+The workflow also removes the generated `-Wframe-larger-than` compiler flag
+because Xiaomi touchscreen drivers can emit large stack-frame warnings that
+Android's kernel build treats as forbidden warnings.
