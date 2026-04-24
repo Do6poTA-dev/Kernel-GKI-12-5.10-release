@@ -34,22 +34,23 @@ packages only a boot-image AnyKernel3 ZIP.
 Start with `profile=baseline`. Do not flash `kvm-lite` or `nethunter-lite` until
 the baseline ZIP boots and ADB comes online.
 
-Use `lto_mode=thin` for GitHub Actions builds. `lto_mode=stock-full` keeps the
-phone's full-LTO config, but it can be killed by GitHub runner resource limits
-during the final `vmlinux.o` link.
+Use `toolchain=android-r563880c` and `lto_mode=stock-full` for the closest
+match to the phone's stock kernel. `toolchain=zyc-21` and `lto_mode=thin` are
+kept only as CI/debug fallbacks; that combination builds, but did not boot on
+the test device.
 
 ## Output
 
 The Lineage-matched workflow uploads the flashable artifact as:
 
-- `${kernel_name}-${device}-${profile}-${lto_mode}-lineage-anykernel3.zip`
+- `${kernel_name}-${device}-${profile}-${toolchain}-${lto_mode}-lineage-anykernel3.zip`
 
 This is a kernel-only AnyKernel3 package for LineageOS. It patches the currently
 installed Lineage `boot` partition and preserves the Lineage ramdisk.
 
 It also uploads a diagnostic artifact:
 
-- `${kernel_name}-${device}-${profile}-${lto_mode}-diagnostic.zip`
+- `${kernel_name}-${device}-${profile}-${toolchain}-${lto_mode}-diagnostic.zip`
 
 It contains the collected build outputs and `MANIFEST.txt` for debugging. It is
 not intended to be flashed directly.
@@ -110,7 +111,7 @@ the XDA lesson from tested custom kernels: match ROM generation, source tree,
 compiler family, and config before adding KernelSU, NetHunter, or virtualization
 patches.
 
-The stock phone config uses full LTO and CFI. The default CI mode switches only
-the LTO flavor to ThinLTO while keeping CFI enabled, because full LTO was killed
-by GitHub Actions during `LTO vmlinux.o`. If the CI runner ever has enough
-memory, `lto_mode=stock-full` is the closest build to the extracted phone config.
+The stock phone config uses Android clang build `14054515` from
+`git_llvm-r563880-release` and full LTO/CFI. A previous CI fallback using ZyC
+Clang 21 plus ThinLTO produced a valid ZIP after packaging fixes, but the phone
+still fell back to fastboot before userspace, so it is not considered bootable.

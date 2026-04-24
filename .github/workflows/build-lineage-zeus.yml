@@ -25,12 +25,20 @@ on:
           - nethunter-lite
       lto_mode:
         description: "LTO mode. thin is CI-friendly; stock-full matches the phone config but can exceed runner resources."
-        default: "thin"
+        default: "stock-full"
         required: true
         type: choice
         options:
           - thin
           - stock-full
+      toolchain:
+        description: "Compiler toolchain. android-r563880c matches LineageOS 23.2-20260414 stock config."
+        default: "android-r563880c"
+        required: true
+        type: choice
+        options:
+          - android-r563880c
+          - zyc-21
 
 jobs:
   build:
@@ -53,20 +61,41 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-lineage-sm8450-5.10-${{ inputs.device }}-${{ github.sha }}
+          key: ccache-lineage-sm8450-5.10-${{ inputs.device }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-${{ github.sha }}
           restore-keys: |
-            ccache-lineage-sm8450-5.10-${{ inputs.device }}-
+            ccache-lineage-sm8450-5.10-${{ inputs.device }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-
+            ccache-lineage-sm8450-5.10-${{ inputs.device }}-${{ inputs.toolchain }}-
             ccache-lineage-sm8450-5.10-
 
-      - name: Download Clang 21 toolchain
+      - name: Download Clang toolchain
         run: |
+          set -euo pipefail
+          toolchain="${{ inputs.toolchain }}"
           mkdir -p clang
-          wget -q \
-            https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250715-release/Clang-21.0.0git-20250715.tar.gz \
-            -O clang.tar.gz
-          tar -xf clang.tar.gz -C clang
-          echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
-          "$GITHUB_WORKSPACE/clang/bin/clang" --version
+          case "$toolchain" in
+            android-r563880c)
+              git clone --depth=1 --filter=blob:none --sparse \
+                -b mirror-goog-llvm-r584948-release \
+                https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
+                android-clang
+              cd android-clang
+              git sparse-checkout set clang-r563880c
+              echo "$GITHUB_WORKSPACE/android-clang/clang-r563880c/bin" >> "$GITHUB_PATH"
+              "$GITHUB_WORKSPACE/android-clang/clang-r563880c/bin/clang" --version
+              ;;
+            zyc-21)
+              wget -q \
+                https://github.com/ZyCromerZ/Clang/releases/download/21.0.0git-20250715-release/Clang-21.0.0git-20250715.tar.gz \
+                -O clang.tar.gz
+              tar -xf clang.tar.gz -C clang
+              echo "$GITHUB_WORKSPACE/clang/bin" >> "$GITHUB_PATH"
+              "$GITHUB_WORKSPACE/clang/bin/clang" --version
+              ;;
+            *)
+              echo "::error::Unsupported toolchain: ${toolchain}"
+              exit 1
+              ;;
+          esac
 
       - name: Clone LineageOS SM8450 kernel
         run: |
@@ -140,6 +169,7 @@ jobs:
           cd kernel-src
           profile="${{ inputs.profile }}"
           lto_mode="${{ inputs.lto_mode }}"
+          toolchain="${{ inputs.toolchain }}"
           config_file="out/.config"
           stock_config="$GITHUB_WORKSPACE/configs/zeus-lineage-23.2-20260414.config"
           image_lz4="out/arch/arm64/boot/Image.lz4"
@@ -161,6 +191,17 @@ jobs:
           [ -f "$image" ] || fail "Missing Image."
           [ -f "$image_lz4" ] || fail "Missing Image.lz4."
           grep -Eq 'clang version 21\.' out/clang-version.txt || fail "Compiler is not Clang 21-class."
+          case "$toolchain" in
+            android-r563880c)
+              grep -Fq 'Android (14054515' out/clang-version.txt || fail "Compiler is not Android clang build 14054515."
+              ;;
+            zyc-21)
+              grep -Fq 'ZyC clang version 21' out/clang-version.txt || fail "Compiler is not ZyC Clang 21."
+              ;;
+            *)
+              fail "Unsupported toolchain: ${toolchain}"
+              ;;
+          esac
           grep -Eq '^CONFIG_LOCALVERSION="-gki"$' "$config_file" || fail 'CONFIG_LOCALVERSION="-gki" is missing.'
           grep -Eq '^CONFIG_LTO=y$' "$config_file" || fail "CONFIG_LTO=y is missing."
           grep -Eq '^CONFIG_LTO_CLANG=y$' "$config_file" || fail "CONFIG_LTO_CLANG=y is missing."
@@ -288,7 +329,7 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel-src
-          artifact_slug="${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}"
+          artifact_slug="${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}"
           artifact_dir="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-diagnostic"
           mkdir -p "$artifact_dir"
           cp out/.config "$artifact_dir/built.config"
@@ -310,8 +351,9 @@ jobs:
           device="${{ inputs.device }}"
           profile="${{ inputs.profile }}"
           lto_mode="${{ inputs.lto_mode }}"
+          toolchain="${{ inputs.toolchain }}"
           kernel_name="${{ inputs.kernel_name }}"
-          artifact_slug="${kernel_name}-${device}-${profile}-${lto_mode}"
+          artifact_slug="${kernel_name}-${device}-${profile}-${toolchain}-${lto_mode}"
           flashable_zip="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-lineage-anykernel3.zip"
 
           rm -rf "$GITHUB_WORKSPACE/anykernel"
@@ -325,7 +367,7 @@ jobs:
           # AnyKernel3 script for LineageOS 23.2 on Xiaomi 12 Pro (zeus).
 
           properties() { '
-          kernel.string=${kernel_name} ${profile}/${lto_mode} for LineageOS 23.2 (${device})
+          kernel.string=${kernel_name} ${profile}/${toolchain}/${lto_mode} for LineageOS 23.2 (${device})
           do.devicecheck=1
           do.modules=0
           do.systemless=0
@@ -355,22 +397,22 @@ jobs:
       - name: Upload Lineage flashable zip
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-lineage-anykernel3
-          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-lineage-anykernel3.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-lineage-anykernel3
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-lineage-anykernel3.zip
           retention-days: 7
 
       - name: Upload diagnostic artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-diagnostic
-          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.lto_mode }}-diagnostic.zip
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-diagnostic
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-diagnostic.zip
           retention-days: 7
 
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: lineage-zeus-build-log-${{ inputs.profile }}-${{ inputs.lto_mode }}
+          name: lineage-zeus-build-log-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}
           path: |
             kernel-src/out/build-zeus-lineage.log
             kernel-src/out/clang-version.txt
