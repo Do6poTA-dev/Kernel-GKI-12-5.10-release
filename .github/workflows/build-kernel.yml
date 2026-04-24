@@ -54,12 +54,13 @@ jobs:
           CONFIG_USB_RAW_GADGET=y
           EOF
 
-      - name: Download Clang toolchain
+       - name: Download Clang toolchain
         run: |
           mkdir -p clang
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz \
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/20.0.0git-20250101-release/Clang-20.0.0git-20250101.tar.gz \
             -O clang.tar.gz
           tar -xf clang.tar.gz -C clang
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
 
       - name: Build kernel
         run: |
