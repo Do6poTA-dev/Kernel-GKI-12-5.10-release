@@ -109,7 +109,10 @@ jobs:
 
           # Vendor kernels often fail newer Clang builds because warnings are promoted to errors.
           # This keeps CI focused on real compile failures while preserving the source tree.
-          sed -i '/^export LTO=/i export KCFLAGS="${KCFLAGS:-} -Wno-error"' build.sh
+          sed -i -E 's/^KBUILD_CFLAGS[[:space:]]+\+= -Wframe-larger-than=\$\(CONFIG_FRAME_WARN\)/KBUILD_CFLAGS += -Wno-frame-larger-than/' \
+            kernel_platform/common/Makefile \
+            kernel_platform/msm-kernel/Makefile
+          sed -i '/^export LTO=/i export KCFLAGS="${KCFLAGS:-} -Wno-error -Wno-frame-larger-than"' build.sh
           chmod +x build.sh
 
       - name: Build device kernel
