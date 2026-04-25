@@ -22,6 +22,7 @@ on:
         options:
           - baseline
           - kvm-lite
+          - kvm-el2-probe
           - nethunter-lite
       lto_mode:
         description: "LTO mode. thin is CI-friendly; stock-full matches the phone config but can exceed runner resources."
@@ -116,6 +117,27 @@ jobs:
           case "$profile" in
             baseline|kvm-lite)
               echo "Using stock Lineage config without feature changes for ${profile}."
+              ;;
+            kvm-el2-probe)
+              echo "Applying experimental KVM EL2 probe settings."
+              scripts/config --file out/.config \
+                --set-str CMDLINE "stack_depot_disable=on kasan.stacktrace=off kvm-arm.mode=nvhe cgroup_disable=pressure cgroup.memory=nokmem" \
+                --enable VIRTUALIZATION \
+                --enable KVM \
+                --enable KVM_MMIO \
+                --enable VIRTIO \
+                --enable VIRTIO_MENU \
+                --enable VIRTIO_MMIO \
+                --enable VIRTIO_NET \
+                --enable VIRTIO_BLK \
+                --enable VIRTIO_CONSOLE \
+                --enable VIRTIO_INPUT \
+                --enable VIRTIO_BALLOON \
+                --enable VHOST \
+                --enable VHOST_MENU \
+                --enable VHOST_NET \
+                --enable VHOST_VSOCK \
+                --enable TUN
               ;;
             nethunter-lite)
               scripts/config --file out/.config --enable USB_RAW_GADGET
@@ -231,6 +253,16 @@ jobs:
               grep -Eq '^CONFIG_VIRTIO=y$' "$config_file" || fail "CONFIG_VIRTIO=y is missing."
               grep -Eq '^CONFIG_TUN=y$' "$config_file" || fail "CONFIG_TUN=y is missing."
               ;;
+            kvm-el2-probe)
+              grep -Eq '^CONFIG_KVM=y$' "$config_file" || fail "CONFIG_KVM=y is missing."
+              grep -Eq '^CONFIG_VIRTUALIZATION=y$' "$config_file" || fail "CONFIG_VIRTUALIZATION=y is missing."
+              grep -Eq '^CONFIG_CMDLINE=.*kvm-arm.mode=nvhe' "$config_file" || fail "CONFIG_CMDLINE does not request kvm-arm.mode=nvhe."
+              grep -Eq '^CONFIG_VIRTIO=y$' "$config_file" || fail "CONFIG_VIRTIO=y is missing."
+              grep -Eq '^CONFIG_VIRTIO_MMIO=y$' "$config_file" || fail "CONFIG_VIRTIO_MMIO=y is missing."
+              grep -Eq '^CONFIG_VHOST=y$' "$config_file" || fail "CONFIG_VHOST=y is missing."
+              grep -Eq '^CONFIG_VHOST_NET=y$' "$config_file" || fail "CONFIG_VHOST_NET=y is missing."
+              grep -Eq '^CONFIG_TUN=y$' "$config_file" || fail "CONFIG_TUN=y is missing."
+              ;;
             nethunter-lite)
               grep -Eq '^CONFIG_NET_NS=y$' "$config_file" || fail "CONFIG_NET_NS=y is missing."
               grep -Eq '^CONFIG_PACKET=y$' "$config_file" || fail "CONFIG_PACKET=y is missing."
@@ -277,6 +309,16 @@ jobs:
           profile_allowed = {
               "baseline": set(),
               "kvm-lite": set(),
+              "kvm-el2-probe": {
+                  "CONFIG_CMDLINE",
+                  "CONFIG_VIRTIO_BLK",
+                  "CONFIG_VIRTIO_NET",
+                  "CONFIG_VIRTIO_CONSOLE",
+                  "CONFIG_VIRTIO_BALLOON",
+                  "CONFIG_VIRTIO_INPUT",
+                  "CONFIG_VIRTIO_MMIO",
+                  "CONFIG_VHOST_NET",
+              },
               "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
           }
           lto_allowed = {
@@ -286,6 +328,7 @@ jobs:
           max_unexpected = {
               "baseline": 25,
               "kvm-lite": 25,
+              "kvm-el2-probe": 35,
               "nethunter-lite": 35,
           }[profile]
 
