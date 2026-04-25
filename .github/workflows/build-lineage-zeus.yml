@@ -24,6 +24,8 @@ on:
           - kvm-lite
           - kvm-el2-probe
           - nethunter-lite
+          - nethunter-cgroup-pids
+          - nethunter-cgroup-device
           - nethunter-cgroup
           - nethunter-pidipc
           - nethunter-userns
@@ -162,6 +164,18 @@ jobs:
               ;;
             nethunter-lite)
               scripts/config --file out/.config --enable USB_RAW_GADGET
+              ;;
+            nethunter-cgroup-pids)
+              echo "Applying NetHunter cgroup pids-only Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable CGROUP_PIDS
+              ;;
+            nethunter-cgroup-device)
+              echo "Applying NetHunter cgroup device-only Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable CGROUP_DEVICE
               ;;
             nethunter-cgroup)
               echo "Applying NetHunter cgroup-only Docker probe settings."
@@ -379,6 +393,24 @@ jobs:
                 fail "nethunter-lite must not force CONFIG_USER_NS or CONFIG_PID_NS."
               fi
               ;;
+            nethunter-cgroup-pids)
+              grep -Eq '^CONFIG_CGROUP_PIDS=y$' "$config_file" || fail "CONFIG_CGROUP_PIDS=y is missing."
+              if grep -Eq '^CONFIG_CGROUP_DEVICE=y$|^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-cgroup-pids enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-cgroup-device)
+              grep -Eq '^CONFIG_CGROUP_DEVICE=y$' "$config_file" || fail "CONFIG_CGROUP_DEVICE=y is missing."
+              if grep -Eq '^CONFIG_CGROUP_PIDS=y$|^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-cgroup-device enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
             nethunter-cgroup)
               grep -Eq '^CONFIG_CGROUP_PIDS=y$' "$config_file" || fail "CONFIG_CGROUP_PIDS=y is missing."
               grep -Eq '^CONFIG_CGROUP_DEVICE=y$' "$config_file" || fail "CONFIG_CGROUP_DEVICE=y is missing."
@@ -516,6 +548,14 @@ jobs:
                   "CONFIG_VHOST_NET",
               },
               "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
+              "nethunter-cgroup-pids": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_CGROUP_PIDS",
+              },
+              "nethunter-cgroup-device": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_CGROUP_DEVICE",
+              },
               "nethunter-cgroup": {
                   "CONFIG_USB_RAW_GADGET",
                   "CONFIG_CGROUP_PIDS",
@@ -575,6 +615,8 @@ jobs:
               "kvm-lite": (),
               "kvm-el2-probe": (),
               "nethunter-lite": (),
+              "nethunter-cgroup-pids": (),
+              "nethunter-cgroup-device": (),
               "nethunter-cgroup": (),
               "nethunter-pidipc": (),
               "nethunter-userns": (),
@@ -592,6 +634,8 @@ jobs:
               "kvm-lite": 25,
               "kvm-el2-probe": 35,
               "nethunter-lite": 35,
+              "nethunter-cgroup-pids": 35,
+              "nethunter-cgroup-device": 35,
               "nethunter-cgroup": 35,
               "nethunter-pidipc": 35,
               "nethunter-userns": 35,
