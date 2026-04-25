@@ -27,6 +27,8 @@ on:
           - nethunter-cgroup-pids
           - nethunter-cgroup-device
           - nethunter-cgroup
+          - nethunter-pidns
+          - nethunter-ipcns
           - nethunter-pidipc
           - nethunter-userns
           - nethunter-docker-nopids
@@ -184,6 +186,19 @@ jobs:
                 --enable USB_RAW_GADGET \
                 --enable CGROUP_PIDS \
                 --enable CGROUP_DEVICE
+              ;;
+            nethunter-pidns)
+              echo "Applying NetHunter PID namespace-only Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable PID_NS
+              ;;
+            nethunter-ipcns)
+              echo "Applying NetHunter IPC namespace-only Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable POSIX_MQUEUE \
+                --enable IPC_NS
               ;;
             nethunter-pidipc)
               echo "Applying NetHunter PID/IPC namespace Docker probe settings."
@@ -432,6 +447,25 @@ jobs:
                 warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
               fi
               ;;
+            nethunter-pidns)
+              grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_POSIX_MQUEUE=y$|^CONFIG_CGROUP_PIDS=y$|^CONFIG_CGROUP_DEVICE=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-pidns enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-ipcns)
+              grep -Eq '^CONFIG_IPC_NS=y$' "$config_file" || fail "CONFIG_IPC_NS=y is missing."
+              grep -Eq '^CONFIG_POSIX_MQUEUE=y$' "$config_file" || fail "CONFIG_POSIX_MQUEUE=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$|^CONFIG_CGROUP_PIDS=y$|^CONFIG_CGROUP_DEVICE=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-ipcns enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
             nethunter-pidipc)
               grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
               grep -Eq '^CONFIG_IPC_NS=y$' "$config_file" || fail "CONFIG_IPC_NS=y is missing."
@@ -585,6 +619,15 @@ jobs:
                   "CONFIG_CGROUP_PIDS",
                   "CONFIG_CGROUP_DEVICE",
               },
+              "nethunter-pidns": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_PID_NS",
+              },
+              "nethunter-ipcns": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_IPC_NS",
+                  "CONFIG_POSIX_MQUEUE",
+              },
               "nethunter-pidipc": {
                   "CONFIG_USB_RAW_GADGET",
                   "CONFIG_PID_NS",
@@ -649,6 +692,8 @@ jobs:
               "nethunter-cgroup-pids": (),
               "nethunter-cgroup-device": (),
               "nethunter-cgroup": (),
+              "nethunter-pidns": (),
+              "nethunter-ipcns": (),
               "nethunter-pidipc": (),
               "nethunter-userns": (),
               "nethunter-docker-nopids": (),
@@ -669,6 +714,8 @@ jobs:
               "nethunter-cgroup-pids": 35,
               "nethunter-cgroup-device": 35,
               "nethunter-cgroup": 35,
+              "nethunter-pidns": 35,
+              "nethunter-ipcns": 35,
               "nethunter-pidipc": 35,
               "nethunter-userns": 35,
               "nethunter-docker-nopids": 35,
