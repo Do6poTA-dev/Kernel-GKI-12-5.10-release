@@ -996,6 +996,12 @@ jobs:
             module_search_roots+=("$GITHUB_WORKSPACE/sm8450-modules")
           fi
           find "${module_search_roots[@]}" -type f -name '*.ko' -exec cp -t "$modules_dir/lib/modules" {} +
+          if command -v llvm-strip >/dev/null; then
+            find "$modules_dir/lib/modules" -type f -name '*.ko' -print0 \
+              | xargs -0 -r llvm-strip --strip-debug
+          else
+            echo "::warning::llvm-strip not found; rebuilt modules artifact will keep debug sections."
+          fi
           find "$modules_dir/lib/modules" -type f -name '*.ko' -printf '%f\n' | sort > "$modules_dir/built-modules.names"
           {
             find out -type f -name '*.ko' -printf 'out/%P\n'
