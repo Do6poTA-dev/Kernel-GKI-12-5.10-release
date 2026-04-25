@@ -360,8 +360,9 @@ jobs:
           # kernel/xiaomi/sm8450 plus sibling sm8450-modules, with several
           # Module.symvers lookups rooted under OUT/obj.
           export OUT="$GITHUB_WORKSPACE/kernel-out"
-          export OUT_DIR="$GITHUB_WORKSPACE/kernel-out"
+          export OUT_DIR="$PWD/out"
           mkdir -p "$OUT/obj/vendor/qcom/opensource"
+          ln -sfn "$modules_src" "$PWD/sm8450-modules"
           ln -sfn "$modules_src" "$OUT/obj/sm8450-modules"
           ln -sfn "$modules_src/qcom/opensource/audio-kernel" \
             "$OUT/obj/vendor/qcom/opensource/audio-kernel"
