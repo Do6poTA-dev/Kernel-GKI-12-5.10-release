@@ -367,6 +367,27 @@ jobs:
           ln -sfn "$modules_src/qcom/opensource/audio-kernel" \
             "$OUT/obj/vendor/qcom/opensource/audio-kernel"
 
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          modules_src = Path(os.environ["GITHUB_WORKSPACE"]) / "sm8450-modules"
+          for makefile in (modules_src / "qcom/opensource/datarmnet-ext").glob("*/Makefile"):
+              text = makefile.read_text()
+              lines = []
+              changed = False
+              for line in text.splitlines():
+                  if "$(MAKE)" in line and " modules $(KBUILD_OPTIONS)" in line:
+                      line = line.replace(" $(KBUILD_EXTRA_SYMBOLS)", "")
+                      if "KBUILD_EXTRA_SYMBOLS=" not in line:
+                          line += ' KBUILD_EXTRA_SYMBOLS="$(KBUILD_EXTRA_SYMBOLS)"'
+                      changed = True
+                  lines.append(line)
+              if changed:
+                  makefile.write_text("\n".join(lines) + "\n")
+                  print(f"Patched datarmnet external module symvers forwarding: {makefile}")
+          PY
+
           build_ext_module() {
             local rel="$1"
             echo "=== Building external module stack: ${rel} ===" | tee -a out/build-zeus-lineage.log
