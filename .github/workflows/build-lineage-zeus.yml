@@ -322,7 +322,7 @@ jobs:
 
           clang --version | tee out/clang-version.txt
           make O=out olddefconfig
-          make -j"$(nproc)" O=out Image.lz4 2>&1 | tee out/build-zeus-lineage.log
+          make -j"$(nproc)" O=out Image.lz4 modules 2>&1 | tee out/build-zeus-lineage.log
 
       - name: Sanity check Lineage-matched output
         run: |
@@ -778,10 +778,40 @@ jobs:
           if [ -f out/arch/arm64/boot/Image ]; then
             cp out/arch/arm64/boot/Image "$artifact_dir/"
           fi
+          find out -type f -name '*.ko' -printf '%P\n' | sort > "$artifact_dir/built-modules.paths"
+          find out -type f -name '*.ko' -printf '%f\n' | sort > "$artifact_dir/built-modules.names"
+          if [ -f out/Module.symvers ]; then
+            cp out/Module.symvers "$artifact_dir/"
+          fi
+          if [ -f out/modules.order ]; then
+            cp out/modules.order "$artifact_dir/"
+          fi
           find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
 
           cd "$GITHUB_WORKSPACE/artifacts"
           zip -r9 "${artifact_slug}-diagnostic.zip" "${artifact_slug}-diagnostic"
+
+      - name: Package rebuilt modules
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          artifact_slug="${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}"
+          modules_dir="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-modules"
+          rm -rf "$modules_dir"
+          mkdir -p "$modules_dir/lib/modules"
+          find out -type f -name '*.ko' -exec cp -t "$modules_dir/lib/modules" {} +
+          find "$modules_dir/lib/modules" -type f -name '*.ko' -printf '%f\n' | sort > "$modules_dir/built-modules.names"
+          find out -type f -name '*.ko' -printf '%P\n' | sort > "$modules_dir/built-modules.paths"
+          if [ -f out/Module.symvers ]; then
+            cp out/Module.symvers "$modules_dir/"
+          fi
+          if [ -f out/modules.order ]; then
+            cp out/modules.order "$modules_dir/"
+          fi
+          find "$modules_dir" -type f -printf '%P\t%s bytes\n' | sort > "$modules_dir/MANIFEST.txt"
+
+          cd "$GITHUB_WORKSPACE/artifacts"
+          zip -r9 "${artifact_slug}-modules.zip" "${artifact_slug}-modules"
 
       - name: Package Lineage AnyKernel3 flashable zip
         run: |
@@ -844,6 +874,13 @@ jobs:
         with:
           name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-diagnostic
           path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-diagnostic.zip
+          retention-days: 7
+
+      - name: Upload rebuilt modules artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-modules
+          path: artifacts/${{ inputs.kernel_name }}-${{ inputs.device }}-${{ inputs.profile }}-${{ inputs.toolchain }}-${{ inputs.lto_mode }}-modules.zip
           retention-days: 7
 
       - name: Upload build log on failure
