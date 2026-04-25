@@ -52,6 +52,11 @@ on:
         options:
           - android-r563880c
           - zyc-21
+      build_external_modules:
+        description: "Build Lineage SM8450 external module stack for matching vendor_dlkm experiments."
+        default: true
+        required: true
+        type: boolean
 
 jobs:
   build:
@@ -116,6 +121,14 @@ jobs:
             https://github.com/LineageOS/android_kernel_xiaomi_sm8450.git \
             -b lineage-23.2 \
             kernel-src
+
+      - name: Clone LineageOS SM8450 external modules
+        if: ${{ inputs.build_external_modules }}
+        run: |
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_kernel_xiaomi_sm8450-modules.git \
+            -b lineage-23.2 \
+            sm8450-modules
 
       - name: Integrate KernelSU Next
         if: ${{ inputs.profile == 'nethunter-rootns-ksu' }}
@@ -323,6 +336,151 @@ jobs:
           clang --version | tee out/clang-version.txt
           make O=out olddefconfig
           make -j"$(nproc)" O=out Image.lz4 modules 2>&1 | tee out/build-zeus-lineage.log
+
+      - name: Build Lineage SM8450 external modules
+        if: ${{ inputs.build_external_modules }}
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export CCACHE_DIR=~/.ccache
+          export KBUILD_BUILD_USER=github-actions
+          export KBUILD_BUILD_HOST=lineage-zeus
+
+          modules_src="$GITHUB_WORKSPACE/sm8450-modules"
+          if [ ! -d "$modules_src" ]; then
+            echo "::error::Missing external module source tree: $modules_src"
+            exit 1
+          fi
+
+          # Qualcomm module makefiles expect Android's relative kernel layout:
+          # kernel/xiaomi/sm8450 plus sibling sm8450-modules, with several
+          # Module.symvers lookups rooted under OUT/obj.
+          export OUT="$GITHUB_WORKSPACE/kernel-out"
+          export OUT_DIR="$GITHUB_WORKSPACE/kernel-out"
+          mkdir -p "$OUT/obj/vendor/qcom/opensource"
+          ln -sfn "$modules_src" "$OUT/obj/sm8450-modules"
+          ln -sfn "$modules_src/qcom/opensource/audio-kernel" \
+            "$OUT/obj/vendor/qcom/opensource/audio-kernel"
+
+          build_ext_module() {
+            local rel="$1"
+            echo "=== Building external module stack: ${rel} ===" | tee -a out/build-zeus-lineage.log
+            make -j"$(nproc)" -C "$modules_src/$rel" \
+              O="$PWD/out" \
+              M="../sm8450-modules/$rel" \
+              KERNEL_SRC="$PWD" \
+              OUT="$OUT" \
+              OUT_DIR="$OUT_DIR" \
+              ARCH="$ARCH" \
+              LLVM="$LLVM" \
+              LLVM_IAS="$LLVM_IAS" \
+              2>&1 | tee -a out/build-zeus-lineage.log
+          }
+
+          # Keep this in Lineage BoardConfig order, with dependency roots first.
+          external_modules=(
+            qcom/opensource/mmrm-driver
+            qcom/opensource/audio-kernel
+            qcom/opensource/camera-kernel
+            qcom/opensource/cvp-kernel
+            qcom/opensource/dataipa/drivers/platform/msm
+            qcom/opensource/datarmnet/core
+            qcom/opensource/datarmnet-ext/aps
+            qcom/opensource/datarmnet-ext/offload
+            qcom/opensource/datarmnet-ext/shs
+            qcom/opensource/datarmnet-ext/perf
+            qcom/opensource/datarmnet-ext/perf_tether
+            qcom/opensource/datarmnet-ext/sch
+            qcom/opensource/datarmnet-ext/wlan
+            qcom/opensource/display-drivers/msm
+            qcom/opensource/eva-kernel
+            qcom/opensource/video-driver
+            qcom/opensource/wlan/qcacld-3.0/.qca6490
+            qcom/opensource/wlan/qcacld-3.0/.qca6750
+          )
+
+          for rel in "${external_modules[@]}"; do
+            build_ext_module "$rel"
+          done
+
+          find "$modules_src" -type f -name '*.ko' -printf '%P\n' | sort > out/external-modules.paths
+          find "$modules_src" -type f -name '*.ko' -printf '%f\n' | sort > out/external-modules.names
+
+          required_external_modules=(
+            adsp_loader_dlkm.ko
+            audio_pkt_dlkm.ko
+            audio_prm_dlkm.ko
+            audpkt_ion_dlkm.ko
+            aw882xx_dlkm.ko
+            camera.ko
+            cs35l41_dlkm.ko
+            cs35l43_dlkm.ko
+            gpr_dlkm.ko
+            gsim.ko
+            hdmi_dlkm.ko
+            ipa_clientsm.ko
+            ipam.ko
+            ipanetm.ko
+            lpass_cdc_dlkm.ko
+            lpass_cdc_rx_macro_dlkm.ko
+            lpass_cdc_tx_macro_dlkm.ko
+            lpass_cdc_va_macro_dlkm.ko
+            lpass_cdc_wsa2_macro_dlkm.ko
+            lpass_cdc_wsa_macro_dlkm.ko
+            machine_dlkm.ko
+            mbhc_dlkm.ko
+            msm-cvp.ko
+            msm-eva.ko
+            msm-mmrm.ko
+            msm_drm.ko
+            msm_video.ko
+            pinctrl_lpi_dlkm.ko
+            q6_dlkm.ko
+            q6_notifier_dlkm.ko
+            q6_pdr_dlkm.ko
+            qca_cld3_qca6490.ko
+            qca_cld3_qca6750.ko
+            rmnet_aps.ko
+            rmnet_core.ko
+            rmnet_ctl.ko
+            rmnet_offload.ko
+            rmnet_perf.ko
+            rmnet_perf_tether.ko
+            rmnet_sch.ko
+            rmnet_shs.ko
+            rmnet_wlan.ko
+            rndisipam.ko
+            snd_event_dlkm.ko
+            spf_core_dlkm.ko
+            stub_dlkm.ko
+            swr_ctrl_dlkm.ko
+            swr_dlkm.ko
+            swr_dmic_dlkm.ko
+            swr_haptics_dlkm.ko
+            wcd937x_dlkm.ko
+            wcd937x_slave_dlkm.ko
+            wcd938x_dlkm.ko
+            wcd938x_slave_dlkm.ko
+            wcd9xxx_dlkm.ko
+            wcd_core_dlkm.ko
+            wsa881x_dlkm.ko
+            wsa883x_dlkm.ko
+          )
+
+          missing=0
+          for name in "${required_external_modules[@]}"; do
+            if ! find "$modules_src" -type f -name "$name" -print -quit | grep -q .; then
+              echo "::error::External module did not build: $name"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Sanity check Lineage-matched output
         run: |
@@ -786,6 +944,18 @@ jobs:
           if [ -f out/modules.order ]; then
             cp out/modules.order "$artifact_dir/"
           fi
+          if [ -f out/external-modules.paths ]; then
+            cp out/external-modules.paths "$artifact_dir/"
+          fi
+          if [ -f out/external-modules.names ]; then
+            cp out/external-modules.names "$artifact_dir/"
+          fi
+          if [ -d "$GITHUB_WORKSPACE/sm8450-modules" ]; then
+            find "$GITHUB_WORKSPACE/sm8450-modules" -type f -name '*.ko' -printf 'sm8450-modules/%P\n' \
+              | sort > "$artifact_dir/external-built-modules.paths"
+            find "$GITHUB_WORKSPACE/sm8450-modules" -type f -name '*.ko' -printf '%f\n' \
+              | sort > "$artifact_dir/external-built-modules.names"
+          fi
           find "$artifact_dir" -type f -printf '%P\t%s bytes\n' | sort > "$artifact_dir/MANIFEST.txt"
 
           cd "$GITHUB_WORKSPACE/artifacts"
@@ -799,9 +969,18 @@ jobs:
           modules_dir="$GITHUB_WORKSPACE/artifacts/${artifact_slug}-modules"
           rm -rf "$modules_dir"
           mkdir -p "$modules_dir/lib/modules"
-          find out -type f -name '*.ko' -exec cp -t "$modules_dir/lib/modules" {} +
+          module_search_roots=(out)
+          if [ -d "$GITHUB_WORKSPACE/sm8450-modules" ]; then
+            module_search_roots+=("$GITHUB_WORKSPACE/sm8450-modules")
+          fi
+          find "${module_search_roots[@]}" -type f -name '*.ko' -exec cp -t "$modules_dir/lib/modules" {} +
           find "$modules_dir/lib/modules" -type f -name '*.ko' -printf '%f\n' | sort > "$modules_dir/built-modules.names"
-          find out -type f -name '*.ko' -printf '%P\n' | sort > "$modules_dir/built-modules.paths"
+          {
+            find out -type f -name '*.ko' -printf 'out/%P\n'
+            if [ -d "$GITHUB_WORKSPACE/sm8450-modules" ]; then
+              find "$GITHUB_WORKSPACE/sm8450-modules" -type f -name '*.ko' -printf 'sm8450-modules/%P\n'
+            fi
+          } | sort > "$modules_dir/built-modules.paths"
           if [ -f out/Module.symvers ]; then
             cp out/Module.symvers "$modules_dir/"
           fi
