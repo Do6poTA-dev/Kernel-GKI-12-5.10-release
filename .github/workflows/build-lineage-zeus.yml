@@ -24,6 +24,7 @@ on:
           - kvm-lite
           - kvm-el2-probe
           - nethunter-lite
+          - nethunter-rootns-ksu
       lto_mode:
         description: "LTO mode. thin is CI-friendly; stock-full matches the phone config but can exceed runner resources."
         default: "thin"
@@ -105,6 +106,20 @@ jobs:
             -b lineage-23.2 \
             kernel-src
 
+      - name: Integrate KernelSU Next
+        if: ${{ inputs.profile == 'nethunter-rootns-ksu' }}
+        run: |
+          set -euo pipefail
+          cd kernel-src
+          curl -LSs \
+            https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh \
+            -o /tmp/kernelsu-next-setup.sh
+          sh /tmp/kernelsu-next-setup.sh stable
+          test -d KernelSU-Next
+          test -L drivers/kernelsu
+          grep -q 'CONFIG_KSU' drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig
+
       - name: Apply Lineage stock config
         run: |
           set -euo pipefail
@@ -141,6 +156,27 @@ jobs:
               ;;
             nethunter-lite)
               scripts/config --file out/.config --enable USB_RAW_GADGET
+              ;;
+            nethunter-rootns-ksu)
+              echo "Applying experimental NetHunter + root namespaces + KernelSU settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable USER_NS \
+                --enable PID_NS \
+                --enable IPC_NS \
+                --enable UTS_NS \
+                --enable NET_NS \
+                --enable POSIX_MQUEUE \
+                --enable CGROUP_PIDS \
+                --enable CGROUP_DEVICE \
+                --enable VETH \
+                --enable BRIDGE \
+                --enable BRIDGE_NETFILTER \
+                --enable OVERLAY_FS \
+                --enable KPROBES \
+                --enable KALLSYMS \
+                --enable KALLSYMS_ALL \
+                --enable KSU
               ;;
             *)
               echo "::error::Unsupported profile: ${profile}"
@@ -280,6 +316,27 @@ jobs:
                 fail "nethunter-lite must not force CONFIG_USER_NS or CONFIG_PID_NS."
               fi
               ;;
+            nethunter-rootns-ksu)
+              grep -Eq '^CONFIG_KSU=y$' "$config_file" || fail "CONFIG_KSU=y is missing."
+              grep -Eq '^CONFIG_KPROBES=y$' "$config_file" || fail "CONFIG_KPROBES=y is missing."
+              grep -Eq '^CONFIG_USER_NS=y$' "$config_file" || fail "CONFIG_USER_NS=y is missing."
+              grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
+              grep -Eq '^CONFIG_IPC_NS=y$' "$config_file" || fail "CONFIG_IPC_NS=y is missing."
+              grep -Eq '^CONFIG_UTS_NS=y$' "$config_file" || fail "CONFIG_UTS_NS=y is missing."
+              grep -Eq '^CONFIG_NET_NS=y$' "$config_file" || fail "CONFIG_NET_NS=y is missing."
+              grep -Eq '^CONFIG_POSIX_MQUEUE=y$' "$config_file" || fail "CONFIG_POSIX_MQUEUE=y is missing."
+              grep -Eq '^CONFIG_CGROUP_PIDS=y$' "$config_file" || fail "CONFIG_CGROUP_PIDS=y is missing."
+              grep -Eq '^CONFIG_CGROUP_DEVICE=y$' "$config_file" || fail "CONFIG_CGROUP_DEVICE=y is missing."
+              grep -Eq '^CONFIG_OVERLAY_FS=y$' "$config_file" || fail "CONFIG_OVERLAY_FS=y is missing."
+              grep -Eq '^CONFIG_BRIDGE_NETFILTER=y$' "$config_file" || fail "CONFIG_BRIDGE_NETFILTER=y is missing."
+              grep -Eq '^CONFIG_VETH=y$' "$config_file" || fail "CONFIG_VETH=y is missing."
+              grep -Eq '^CONFIG_BT_RFCOMM=y$' "$config_file" || fail "CONFIG_BT_RFCOMM=y is missing."
+              grep -Eq '^CONFIG_BT_RFCOMM_TTY=y$' "$config_file" || fail "CONFIG_BT_RFCOMM_TTY=y is missing."
+              grep -Eq '^CONFIG_USB_CONFIGFS_F_HID=y$' "$config_file" || fail "CONFIG_USB_CONFIGFS_F_HID=y is missing."
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
             *)
               fail "Unsupported profile: ${profile}"
               ;;
@@ -320,6 +377,25 @@ jobs:
                   "CONFIG_VHOST_NET",
               },
               "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
+              "nethunter-rootns-ksu": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_USER_NS",
+                  "CONFIG_PID_NS",
+                  "CONFIG_IPC_NS",
+                  "CONFIG_POSIX_MQUEUE",
+                  "CONFIG_CGROUP_PIDS",
+                  "CONFIG_CGROUP_DEVICE",
+                  "CONFIG_BRIDGE_NETFILTER",
+                  "CONFIG_NETFILTER_FAMILY_BRIDGE",
+                  "CONFIG_NF_CONNTRACK_BRIDGE",
+              },
+          }
+          profile_allowed_prefixes = {
+              "baseline": (),
+              "kvm-lite": (),
+              "kvm-el2-probe": (),
+              "nethunter-lite": (),
+              "nethunter-rootns-ksu": ("CONFIG_KSU",),
           }
           lto_allowed = {
               "stock-full": set(),
@@ -330,6 +406,7 @@ jobs:
               "kvm-lite": 25,
               "kvm-el2-probe": 35,
               "nethunter-lite": 35,
+              "nethunter-rootns-ksu": 80,
           }[profile]
 
           def parse(path):
@@ -352,6 +429,8 @@ jobs:
               if key in ignore_exact or key.startswith(ignore_prefixes):
                   continue
               if key in profile_allowed[profile]:
+                  continue
+              if any(key.startswith(prefix) for prefix in profile_allowed_prefixes[profile]):
                   continue
               if key in lto_allowed[lto_mode]:
                   continue
