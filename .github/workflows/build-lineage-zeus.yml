@@ -24,6 +24,11 @@ on:
           - kvm-lite
           - kvm-el2-probe
           - nethunter-lite
+          - nethunter-cgroup
+          - nethunter-pidipc
+          - nethunter-userns
+          - nethunter-docker-min
+          - nethunter-bridge-nf
           - nethunter-rootns
           - nethunter-rootns-ksu
       lto_mode:
@@ -157,6 +162,46 @@ jobs:
               ;;
             nethunter-lite)
               scripts/config --file out/.config --enable USB_RAW_GADGET
+              ;;
+            nethunter-cgroup)
+              echo "Applying NetHunter cgroup-only Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable CGROUP_PIDS \
+                --enable CGROUP_DEVICE
+              ;;
+            nethunter-pidipc)
+              echo "Applying NetHunter PID/IPC namespace Docker probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable PID_NS \
+                --enable IPC_NS \
+                --enable UTS_NS \
+                --enable POSIX_MQUEUE
+              ;;
+            nethunter-userns)
+              echo "Applying NetHunter USER namespace probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable USER_NS
+              ;;
+            nethunter-docker-min)
+              echo "Applying minimal rootful Docker settings without USER_NS or bridge netfilter."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable PID_NS \
+                --enable IPC_NS \
+                --enable UTS_NS \
+                --enable POSIX_MQUEUE \
+                --enable CGROUP_PIDS \
+                --enable CGROUP_DEVICE
+              ;;
+            nethunter-bridge-nf)
+              echo "Applying NetHunter bridge netfilter probe settings."
+              scripts/config --file out/.config \
+                --enable USB_RAW_GADGET \
+                --enable BRIDGE \
+                --enable BRIDGE_NETFILTER
               ;;
             nethunter-rootns)
               echo "Applying experimental NetHunter + root namespace settings without KernelSU."
@@ -334,6 +379,60 @@ jobs:
                 fail "nethunter-lite must not force CONFIG_USER_NS or CONFIG_PID_NS."
               fi
               ;;
+            nethunter-cgroup)
+              grep -Eq '^CONFIG_CGROUP_PIDS=y$' "$config_file" || fail "CONFIG_CGROUP_PIDS=y is missing."
+              grep -Eq '^CONFIG_CGROUP_DEVICE=y$' "$config_file" || fail "CONFIG_CGROUP_DEVICE=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-cgroup enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-pidipc)
+              grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
+              grep -Eq '^CONFIG_IPC_NS=y$' "$config_file" || fail "CONFIG_IPC_NS=y is missing."
+              grep -Eq '^CONFIG_UTS_NS=y$' "$config_file" || fail "CONFIG_UTS_NS=y is missing."
+              grep -Eq '^CONFIG_POSIX_MQUEUE=y$' "$config_file" || fail "CONFIG_POSIX_MQUEUE=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_CGROUP_PIDS=y$|^CONFIG_CGROUP_DEVICE=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-pidipc enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-userns)
+              grep -Eq '^CONFIG_USER_NS=y$' "$config_file" || fail "CONFIG_USER_NS=y is missing."
+              if grep -Eq '^CONFIG_PID_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_CGROUP_PIDS=y$|^CONFIG_CGROUP_DEVICE=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-userns enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-docker-min)
+              grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
+              grep -Eq '^CONFIG_IPC_NS=y$' "$config_file" || fail "CONFIG_IPC_NS=y is missing."
+              grep -Eq '^CONFIG_UTS_NS=y$' "$config_file" || fail "CONFIG_UTS_NS=y is missing."
+              grep -Eq '^CONFIG_POSIX_MQUEUE=y$' "$config_file" || fail "CONFIG_POSIX_MQUEUE=y is missing."
+              grep -Eq '^CONFIG_CGROUP_PIDS=y$' "$config_file" || fail "CONFIG_CGROUP_PIDS=y is missing."
+              grep -Eq '^CONFIG_CGROUP_DEVICE=y$' "$config_file" || fail "CONFIG_CGROUP_DEVICE=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_BRIDGE_NETFILTER=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-docker-min enabled USER_NS, bridge netfilter, or KSU unexpectedly."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
+            nethunter-bridge-nf)
+              grep -Eq '^CONFIG_BRIDGE_NETFILTER=y$' "$config_file" || fail "CONFIG_BRIDGE_NETFILTER=y is missing."
+              if grep -Eq '^CONFIG_USER_NS=y$|^CONFIG_PID_NS=y$|^CONFIG_IPC_NS=y$|^CONFIG_CGROUP_PIDS=y$|^CONFIG_CGROUP_DEVICE=y$|^CONFIG_KSU=y$' "$config_file"; then
+                fail "nethunter-bridge-nf enabled an unrelated high-risk option."
+              fi
+              if ! grep -Eq '^CONFIG_USB_RAW_GADGET=y$' "$config_file"; then
+                warn "CONFIG_USB_RAW_GADGET was requested but not enabled by olddefconfig."
+              fi
+              ;;
             nethunter-rootns)
               grep -Eq '^CONFIG_USER_NS=y$' "$config_file" || fail "CONFIG_USER_NS=y is missing."
               grep -Eq '^CONFIG_PID_NS=y$' "$config_file" || fail "CONFIG_PID_NS=y is missing."
@@ -417,6 +516,35 @@ jobs:
                   "CONFIG_VHOST_NET",
               },
               "nethunter-lite": {"CONFIG_USB_RAW_GADGET"},
+              "nethunter-cgroup": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_CGROUP_PIDS",
+                  "CONFIG_CGROUP_DEVICE",
+              },
+              "nethunter-pidipc": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_PID_NS",
+                  "CONFIG_IPC_NS",
+                  "CONFIG_POSIX_MQUEUE",
+              },
+              "nethunter-userns": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_USER_NS",
+              },
+              "nethunter-docker-min": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_PID_NS",
+                  "CONFIG_IPC_NS",
+                  "CONFIG_POSIX_MQUEUE",
+                  "CONFIG_CGROUP_PIDS",
+                  "CONFIG_CGROUP_DEVICE",
+              },
+              "nethunter-bridge-nf": {
+                  "CONFIG_USB_RAW_GADGET",
+                  "CONFIG_BRIDGE_NETFILTER",
+                  "CONFIG_NETFILTER_FAMILY_BRIDGE",
+                  "CONFIG_NF_CONNTRACK_BRIDGE",
+              },
               "nethunter-rootns": {
                   "CONFIG_USB_RAW_GADGET",
                   "CONFIG_USER_NS",
@@ -447,6 +575,11 @@ jobs:
               "kvm-lite": (),
               "kvm-el2-probe": (),
               "nethunter-lite": (),
+              "nethunter-cgroup": (),
+              "nethunter-pidipc": (),
+              "nethunter-userns": (),
+              "nethunter-docker-min": (),
+              "nethunter-bridge-nf": (),
               "nethunter-rootns": (),
               "nethunter-rootns-ksu": ("CONFIG_KSU",),
           }
@@ -459,6 +592,11 @@ jobs:
               "kvm-lite": 25,
               "kvm-el2-probe": 35,
               "nethunter-lite": 35,
+              "nethunter-cgroup": 35,
+              "nethunter-pidipc": 35,
+              "nethunter-userns": 35,
+              "nethunter-docker-min": 35,
+              "nethunter-bridge-nf": 35,
               "nethunter-rootns": 45,
               "nethunter-rootns-ksu": 80,
           }[profile]
